@@ -19,6 +19,15 @@ firebase-debug.*.log
 .env.local
 .env.*.local
 
+# Service account and private credential files
+**/service-account.json
+**/*-service-account.json
+**/*service-account*.json
+**/*service_account*.json
+**/*firebase-adminsdk*.json
+**/application_default_credentials.json
+**/credentials.json
+
 # Logs
 logs
 *.log
