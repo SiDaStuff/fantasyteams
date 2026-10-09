@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.12.0 <25"
+  },
   "description": "Fantasy Teams — a multiplayer fantasy football game where friends draft entire NFL teams instead of individual players.",
   "scripts": {
     "dev": "vite",

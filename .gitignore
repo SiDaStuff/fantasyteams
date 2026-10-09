@@ -9,7 +9,7 @@ dist-ssr
 .firebase
 firebase-debug.log
 firebase-debug.*.log
-**/lib/
+# Source libraries in src/lib and netlify/functions/lib must be committed.
 
 # Netlify
 .netlify

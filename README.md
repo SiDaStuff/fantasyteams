@@ -56,6 +56,10 @@ Firebase Realtime Database   (rules deny ALL direct access)
 
 ## Quick start
 
+Use Node.js 24.12 or newer within the 24.x release line (`.nvmrc` selects
+Node.js 24). Netlify uses this file for the build version; the Firebase SDK
+requires at least Node.js 24.12.
+
 1. **Install dependencies**
 
    ```bash
