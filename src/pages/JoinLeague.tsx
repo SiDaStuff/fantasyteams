@@ -1,24 +1,21 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowRight, KeyRound, LogIn, Search, Users } from 'lucide-react';
+import { KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Panel } from '@/components/ui/Panel';
 import { Alert } from '@/components/ui/Alert';
-import { Badge } from '@/components/ui/Badge';
-import { Logo } from '@/components/brand/Logo';
 import { FirebaseSetupNotice } from '@/components/layout/FirebaseSetupNotice';
 import { api, apiErrorCode, apiErrorMessage } from '@/lib/api';
 import { normalizeLeagueCode, validateLeagueCode } from '@/lib/validators';
-import { formatDraftFormat, formatTimer } from '@/lib/format';
 import { useAuth } from '@/context/AuthContext';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import type { LeaguePreview } from '@/types';
 
-type Stage = 'code' | 'preview' | 'joining';
+type Stage = 'code' | 'preview';
 
 export function JoinLeague() {
-  const { status, user } = useAuth();
+  const { status } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -51,7 +48,7 @@ export function JoinLeague() {
     } catch (err) {
       const errCode = apiErrorCode(err);
       if (errCode === 'not-found') {
-        setError('No league found with that code. Double-check the invite and try again.');
+        setError('No league found with that code.');
       } else {
         setError(apiErrorMessage(err));
       }
@@ -70,13 +67,10 @@ export function JoinLeague() {
     } catch (err) {
       const errCode = apiErrorCode(err);
       if (errCode === 'already-exists') {
-        setError('You are already a member of this league — opening it…');
-        setPreview((p) => (p ? { ...p, isMember: true } : p));
-        if (preview) {
-          window.setTimeout(() => navigate(`/leagues/${preview.leagueId}`), 1200);
-        }
+        navigate(`/leagues/${preview.leagueId}`);
+        return;
       } else if (errCode === 'resource-exhausted') {
-        setError('This league is already full.');
+        setError('This league is full.');
       } else if (errCode === 'failed-precondition') {
         setError('This league is no longer accepting new members.');
       } else {
@@ -96,31 +90,27 @@ export function JoinLeague() {
   }
 
   return (
-    <div className="bg-auth flex min-h-[85vh] items-center justify-center px-4 py-14 sm:px-6">
-      <div className="w-full max-w-lg">
-        <div className="animate-fade-up flex flex-col items-center text-center">
-          <Link to="/" className="focus-ring rounded-xl" aria-label="Fantasy Teams home">
-            <Logo size={44} />
-          </Link>
-          <h1 className="mt-6 font-display text-2xl font-bold tracking-tight text-white">Join a league</h1>
-          <p className="mt-2 text-sm text-slate-400">
-            {signedIn
-              ? `Signed in as ${user?.email ?? 'you'} — enter your six-character league code.`
-              : 'Sign in to join a private league with your invite code.'}
-          </p>
-        </div>
+    <div className="flex min-h-[75vh] items-start justify-center px-4 py-16 sm:px-6">
+      <div className="w-full max-w-md">
+        <h1 className="font-display text-2xl font-bold tracking-tight text-white">Join a league</h1>
 
-        <Panel className="animate-fade-up mt-8 rounded-2xl p-6 sm:p-8" style={{ animationDelay: '100ms' }}>
+        <Panel className="mt-6 rounded-xl p-6">
           {!signedIn ? (
             <div className="space-y-4">
-              <Alert variant="info">You need an account to join a league. Creating one takes under a minute.</Alert>
-              <Button to="/login" size="lg" fullWidth leftIcon={<LogIn className="h-4 w-4" />}>
-                Sign in to continue
+              <Alert variant="info">Sign in to join with your invite code.</Alert>
+              <Button to="/login" size="lg" fullWidth>
+                Sign in
               </Button>
+              <p className="text-center text-xs text-slate-500">
+                New here?{' '}
+                <Link to="/register" className="font-semibold text-electric-300 hover:text-electric-200">
+                  Create an account
+                </Link>
+              </p>
             </div>
           ) : (
             <div className="space-y-5">
-              {error && stage === 'code' ? <Alert variant="error">{error}</Alert> : null}
+              {error ? <Alert variant="error">{error}</Alert> : null}
 
               <form
                 onSubmit={(event: FormEvent) => {
@@ -136,53 +126,28 @@ export function JoinLeague() {
                     setCode(normalizeLeagueCode(e.target.value));
                     setError(null);
                   }}
-                  placeholder="e.g. K7XQ2M"
+                  placeholder="6 characters"
                   className="font-mono text-lg tracking-[0.3em] uppercase"
                   maxLength={6}
                   autoComplete="off"
                   autoFocus
                   leftIcon={<KeyRound className="h-4 w-4" />}
                 />
-                <Button type="submit" fullWidth size="lg" isLoading={busy && stage === 'code'} leftIcon={busy ? undefined : <Search className="h-4 w-4" />}>
+                <Button type="submit" fullWidth size="lg" isLoading={busy && stage === 'code'}>
                   Find league
                 </Button>
               </form>
 
               {stage === 'preview' && preview ? (
-                <div className="animate-scale-in space-y-5">
-                  <div className="panel rounded-xl p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-display text-lg font-semibold text-white">{preview.name}</p>
-                        <p className="mt-0.5 text-sm text-slate-400">
-                          {preview.season} NFL season · by {preview.commissionerName}
-                        </p>
-                      </div>
-                      <Badge variant={preview.status === 'waiting' ? 'success' : 'neutral'}>
-                        {preview.status === 'waiting' ? 'Open' : 'Closed'}
-                      </Badge>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                      <span className="flex items-center gap-1.5">
-                        <Users className="h-3.5 w-3.5 text-electric-400" />
-                        {preview.memberCount}/{preview.maxParticipants} owners
-                      </span>
-                      <span>{formatDraftFormat(preview.draftFormat)} draft</span>
-                      <span>{formatTimer(preview.draftPickTimerSeconds)} picks</span>
-                    </div>
-
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-navy-800">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-electric-500 to-ice-400"
-                        style={{ width: `${Math.max((preview.memberCount / preview.maxParticipants) * 100, 5)}%` }}
-                      />
-                    </div>
+                <div className="animate-fade-in space-y-5 border-t border-line pt-5">
+                  <div>
+                    <p className="truncate font-display text-lg font-semibold text-white">{preview.name}</p>
+                    <p className="mt-0.5 text-sm text-slate-400">
+                      {preview.memberCount}/{preview.maxParticipants} players · {preview.season} season
+                    </p>
                   </div>
 
-                  {error && stage === 'preview' ? <Alert variant="error">{error}</Alert> : null}
-
-                  <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                  <div className="flex gap-3">
                     <Button
                       variant="ghost"
                       onClick={() => {
@@ -192,21 +157,20 @@ export function JoinLeague() {
                         setSearchParams({}, { replace: true });
                       }}
                     >
-                      Change code
+                      Back
                     </Button>
                     <Button
                       className="flex-1"
                       size="lg"
-                      isLoading={busy && stage === 'preview'}
+                      isLoading={busy}
                       onClick={() => void handleJoin()}
-                      disabled={preview.status !== 'waiting' || preview.memberCount >= preview.maxParticipants || preview.isMember}
-                      rightIcon={<ArrowRight className="h-4 w-4" />}
+                      disabled={preview.status !== 'waiting' || preview.memberCount >= preview.maxParticipants}
                     >
                       {preview.isMember
-                        ? 'Already a member — opening…'
+                        ? 'Open league'
                         : preview.memberCount >= preview.maxParticipants
                           ? 'League is full'
-                          : `Join ${preview.name}`}
+                          : 'Join league'}
                     </Button>
                   </div>
                 </div>

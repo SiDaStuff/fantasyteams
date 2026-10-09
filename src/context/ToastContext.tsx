@@ -28,12 +28,6 @@ const ICONS: Record<ToastVariant, typeof Info> = {
   info: Info,
 };
 
-const BAR_COLORS: Record<ToastVariant, string> = {
-  success: 'bg-emerald-400',
-  error: 'bg-rose-400',
-  info: 'bg-electric-400',
-};
-
 const AUTO_DISMISS_MS = 4500;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -70,10 +64,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           return (
             <div
               key={toast.id}
-              className="animate-toast-in pointer-events-auto relative w-full max-w-sm overflow-hidden rounded-xl border border-line bg-navy-800/95 shadow-2xl shadow-black/50 backdrop-blur"
+              className="animate-toast-in pointer-events-auto relative w-full max-w-sm overflow-hidden rounded-lg border border-line bg-navy-850 shadow-xl shadow-black/40"
             >
-              <div className={`absolute inset-y-0 left-0 w-1 ${BAR_COLORS[toast.variant]}`} />
-              <div className="flex items-start gap-3 px-4 py-3.5 pl-5">
+              <div className="flex items-start gap-3 px-4 py-3.5">
                 <Icon
                   className={`mt-0.5 h-5 w-5 shrink-0 ${
                     toast.variant === 'success'

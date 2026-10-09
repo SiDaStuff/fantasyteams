@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Alert } from '@/components/ui/Alert';
@@ -135,7 +135,7 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
 
   const myTeams = me?.teams ?? [];
   const weekData = useNflWeek(insights.season, progress.currentWeek, 60000);
-  const myTeamIds = useMemo(() => new Set(myTeams.map((team) => team.teamId)), [myTeams]);
+  const myTeamIds = new Set((me?.teams ?? []).map((team) => team.teamId));
 
   const myGamesThisWeek = (weekData.weekData?.games ?? []).filter(
     (game) => myTeamIds.has(game.homeTeamId) || myTeamIds.has(game.awayTeamId),

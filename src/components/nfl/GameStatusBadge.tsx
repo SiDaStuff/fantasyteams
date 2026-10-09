@@ -1,28 +1,25 @@
-import { Badge } from '@/components/ui/Badge';
+import { cn } from '@/lib/cn';
 import type { NflGameStatus } from '@/types';
 
 const LABELS: Record<NflGameStatus, string> = {
-  scheduled: 'Scheduled',
+  scheduled: 'Upcoming',
   in_progress: 'Live',
   halftime: 'Halftime',
   final: 'Final',
-  postponed: 'Postponed',
+  postponed: 'PPD',
 };
 
+const TONE: Record<NflGameStatus, string> = {
+  scheduled: 'text-slate-500',
+  in_progress: 'text-rose-300',
+  halftime: 'text-rose-300',
+  final: 'text-slate-400',
+  postponed: 'text-amber-300',
+};
+
+/** Compact text status for a game. */
 export function GameStatusBadge({ status, className = '' }: { status: NflGameStatus; className?: string }) {
-  switch (status) {
-    case 'in_progress':
-    case 'halftime':
-      return (
-        <Badge variant="danger" className={className} icon={<span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-rose-300" />}>
-          {LABELS[status]}
-        </Badge>
-      );
-    case 'final':
-      return <Badge variant="neutral" className={className}>{LABELS.final}</Badge>;
-    case 'postponed':
-      return <Badge variant="warning" className={className}>{LABELS.postponed}</Badge>;
-    default:
-      return <Badge variant="neutral" className={className}>{LABELS.scheduled}</Badge>;
-  }
+  return (
+    <span className={cn('text-xs font-medium', TONE[status], className)}>{LABELS[status]}</span>
+  );
 }

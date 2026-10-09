@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Timer } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 export interface CountdownTimerProps {
@@ -44,28 +43,16 @@ export function CountdownTimer({ deadline, paused, idleLabel = '—', className 
   return (
     <div
       className={cn(
-        'flex min-w-24 items-center gap-2 rounded-xl px-3 py-1.5 font-mono text-lg font-bold tabular-nums transition-colors',
+        'rounded-lg px-3 py-1.5 font-mono text-xl font-bold tabular-nums transition-colors',
         paused && 'text-slate-500',
-        urgent && 'animate-pulse-soft bg-rose-500/15 text-rose-300',
+        urgent && 'bg-rose-500/15 text-rose-300',
         warning && 'bg-amber-500/10 text-amber-300',
-        !paused && !urgent && !warning && 'bg-navy-800/80 text-white',
+        !paused && !urgent && !warning && 'bg-navy-800 text-white',
         className,
       )}
       role="timer"
       aria-label={paused ? 'Timer paused' : 'Time remaining'}
     >
-      <Timer
-        className={cn(
-          'h-4 w-4',
-          paused
-            ? 'text-slate-500'
-            : urgent
-              ? 'text-rose-400'
-              : warning
-                ? 'text-amber-400'
-                : 'text-electric-400',
-        )}
-      />
       {paused ? 'Paused' : deadline ? format(remainingMs) : idleLabel}
     </div>
   );

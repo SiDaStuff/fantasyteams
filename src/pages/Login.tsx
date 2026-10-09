@@ -85,8 +85,8 @@ export function Login() {
 
   return (
     <AuthShell
-      title="Welcome back"
-      subtitle="Sign in to draft your teams and chase the crown."
+      title="Sign in"
+      subtitle={undefined}
       footer={
         <p>
           New to Fantasy Teams?{' '}

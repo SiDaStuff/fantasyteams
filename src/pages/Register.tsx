@@ -88,8 +88,8 @@ export function Register() {
 
   return (
     <AuthShell
-      title="Create your account"
-      subtitle="Get a profile, start a league, and invite your crew."
+      title="Create account"
+      subtitle={undefined}
       footer={
         <p>
           Already have an account?{' '}

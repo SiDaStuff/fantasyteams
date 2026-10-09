@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { Crown, Megaphone, RefreshCw, Trash2, UserMinus } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { api, apiErrorMessage } from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
-import { cn } from '@/lib/cn';
 import type { LeagueMember } from '@/types';
 
 export interface LeaderCommandsProps {
@@ -69,7 +67,7 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
       setTargetId('');
       onChanged();
     } catch (error) {
-      toast.push('error', 'Could not transfer the crown', apiErrorMessage(error));
+      toast.push('error', 'Could not transfer the commissioner role', apiErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -97,19 +95,18 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
       {/* Announcement */}
       <div>
         <p className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-white">
-          <Megaphone className="h-4 w-4 text-electric-400" />
+          <Megaphone className="h-4 w-4 text-electric-300" />
           Announcement
         </p>
-        <p className="mb-2 text-xs text-slate-500">Shown to everyone in the league.</p>
         <textarea
           value={text}
           onChange={(event) => setText(event.target.value)}
           maxLength={280}
           rows={2}
-          placeholder="e.g. Draft night is Saturday at 8pm."
-          className="focus-ring w-full rounded-xl border border-line bg-navy-900/80 px-3.5 py-2.5 text-sm text-white placeholder-slate-500"
+          placeholder="Draft night is Saturday at 8pm."
+          className="focus-ring w-full rounded-lg border border-line bg-navy-900 px-3.5 py-2.5 text-sm text-white placeholder-slate-500"
         />
-        <div className="mt-2 flex items-center justify-end gap-2">
+        <div className="mt-2 flex items-center justify-end gap-3">
           <span className="text-xs text-slate-500">{text.length}/280</span>
           <Button size="sm" onClick={() => void postAnnouncement()} isLoading={busy && text.trim() !== ''}>
             {text.trim() ? 'Post' : 'Clear'}
@@ -118,17 +115,17 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
       </div>
 
       {/* Ready statuses */}
-      <div className="rounded-xl border border-line bg-navy-900/50 px-3.5 py-3">
+      <div className="rounded-lg border border-line px-3.5 py-3">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="flex items-center gap-1.5 text-sm font-semibold text-white">
-              <RefreshCw className="h-4 w-4 text-electric-400" />
+              <RefreshCw className="h-4 w-4 text-electric-300" />
               Ready statuses
             </p>
-            <p className="text-xs text-slate-500">Set every owner back to “Not ready”.</p>
+            <p className="text-xs text-slate-500">Set every player back to not ready.</p>
           </div>
-          <Button size="sm" variant="outline" onClick={() => void resetAllReady()} isLoading={busy} disabled={busy && true}>
-            Reset all
+          <Button size="sm" variant="outline" onClick={() => void resetAllReady()} isLoading={busy}>
+            Reset
           </Button>
         </div>
       </div>
@@ -143,12 +140,12 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
           <select
             value={targetId}
             onChange={(event) => setTargetId(event.target.value)}
-            className="focus-ring h-11 min-w-0 flex-1 rounded-xl border border-line bg-navy-900/80 px-3.5 text-sm text-white"
+            className="focus-ring h-11 min-w-0 flex-1 rounded-lg border border-line bg-navy-900 px-3.5 text-sm text-white"
             aria-label="New commissioner"
           >
-            <option value="" className="bg-navy-900">Choose an owner…</option>
+            <option value="">Choose a player…</option>
             {safeMembers.map((member) => (
-              <option key={member.userId} value={member.userId} className="bg-navy-900">
+              <option key={member.userId} value={member.userId}>
                 {member.displayName}
               </option>
             ))}
@@ -164,19 +161,19 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
         <div>
           <p className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-white">
             <UserMinus className="h-4 w-4 text-rose-400" />
-            Remove member
+            Remove player
           </p>
           <div className="space-y-1.5">
             {safeMembers.length === 0 ? (
               <p className="text-xs text-slate-500">No one else to remove.</p>
             ) : (
               safeMembers.map((member) => (
-                <div key={member.userId} className="flex items-center gap-2.5 rounded-lg border border-line bg-navy-900/50 px-3 py-2">
-                  <Avatar name={member.displayName} src={member.photoURL} size="sm" />
+                <div key={member.userId} className="flex items-center gap-2.5 rounded-lg border border-line px-3 py-2">
+                  <Avatar name={member.displayName} src={member.photoURL} size="xs" />
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-white">{member.displayName}</span>
                   {confirmRemove === member.userId ? (
                     <>
-                      <span className="text-xs font-semibold text-amber-300">Remove {member.displayName}?</span>
+                      <span className="text-xs font-semibold text-amber-300">Remove?</span>
                       <Button size="sm" variant="danger" onClick={() => void remove(member.userId)} isLoading={busy}>
                         Yes
                       </Button>
@@ -195,12 +192,6 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
           </div>
         </div>
       ) : null}
-
-      <div className={cn('flex items-center gap-2 text-xs text-slate-500')}>
-        <Badge variant="gold" icon={<Crown className="h-3 w-3" />}>
-          Commissioner only
-        </Badge>
-      </div>
     </div>
   );
 }
