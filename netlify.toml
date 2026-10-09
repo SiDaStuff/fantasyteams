@@ -1,0 +1,28 @@
+# Netlify site configuration
+# The SPA is built with Vite and served from /dist.
+# All database access happens inside the API function (netlify/functions/api.ts)
+# using a Firebase service account — the browser never touches Firebase data.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+
+# Scheduled safety net: advances drafts whose timer expired while nobody is online.
+[functions."draft-clock"]
+  schedule = "* * * * *"
+
+# NFL data sync: refreshes schedules/scores and recomputes records in-season.
+[functions."nfl-sync"]
+  schedule = "*/10 * * * *"
+
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "VITE_FIREBASE_API_KEY,VITE_FIREBASE_APP_ID,VITE_FIREBASE_AUTH_DOMAIN,VITE_FIREBASE_MESSAGING_SENDER_ID,VITE_FIREBASE_PROJECT_ID,VITE_FIREBASE_STORAGE_BUCKET"
+
+# Client-side routing: let React Router handle every path.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
