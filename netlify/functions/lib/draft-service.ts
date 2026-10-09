@@ -8,7 +8,7 @@
  * the Firebase Admin SDK through a `Database` handle.
  */
 import type { Database } from 'firebase-admin/database';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import type { DraftFormat } from '../../../src/types';
 import { NFL_TEAMS_BY_ID } from '../../../src/data/nflTeams';
 import {
@@ -117,19 +117,21 @@ export function autopick(draft: DraftValue, timerMs: number, now: number): Draft
  */
 const DRAFT_LOCK_LEASE_MS = 10000;
 
-export async function acquireDraftLock(db: Database, draftId: string, owner: string, attempts = 4): Promise<string | null> {
+export async function acquireDraftLock(db: Database, draftId: string, owner: string, attempts = 8): Promise<string | null> {
   const lockRef = db.ref(`drafts/${draftId}/_lock`);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const token = `${owner}:${randomUUID()}`;
     const now = Date.now();
     const result = await lockRef.transaction((current) => {
-      const lock = current as { at?: number } | null;
-      if (lock && now - Number(lock.at ?? 0) < DRAFT_LOCK_LEASE_MS) return;
+      const lock = current as { at?: number; token?: unknown } | null;
+      const hasUsableToken = typeof lock?.token === 'string' && lock.token.length > 0;
+      if (hasUsableToken && now - Number(lock?.at ?? 0) < DRAFT_LOCK_LEASE_MS) return;
       return { owner, token, at: now };
     });
     if (result.committed) return token;
     if (attempt < attempts - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)));
+      const delayMs = Math.min(450, 100 * (attempt + 1)) + randomInt(0, 80);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   return null;

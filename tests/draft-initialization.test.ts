@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Database } from 'firebase-admin/database';
-import { ensureDraftInitialized, type DraftValue } from '../netlify/functions/lib/draft-service';
+import { acquireDraftLock, ensureDraftInitialized, releaseDraftLock, type DraftValue } from '../netlify/functions/lib/draft-service';
 
 const INITIAL_DRAFT = { status: 'upcoming', rounds: 8, order: ['a', 'b'], currentPick: 0, totalPicks: 16 };
 
@@ -59,6 +59,14 @@ describe('draft initialization', () => {
     const fixture = databaseFixture({ _lock: { owner: 'sync', at: Date.now() - 10_000 } });
     await ensureDraftInitialized(fixture.db, 'league', INITIAL_DRAFT);
     expect(fixture.value()).toEqual(INITIAL_DRAFT);
+  });
+
+  it('takes over a legacy lock that has no ownership token', async () => {
+    const fixture = databaseFixture({ _lock: { owner: 'old-deployment', at: Date.now() } });
+    const token = await acquireDraftLock(fixture.db, 'league', 'start');
+    expect(token).toMatch(/^start:/);
+    await releaseDraftLock(fixture.db, 'league', token as string);
+    expect(fixture.value()).toEqual({});
   });
 
   it.each(['upcoming', 'live', 'paused', 'completed'])('preserves an existing %s draft and its picks', async (status) => {
