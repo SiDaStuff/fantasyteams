@@ -7,6 +7,7 @@ import type {
   League,
   LeagueInsights,
   LeagueMember,
+  TeamMarket,
   LeagueStandings,
   NflMeta,
   TeamSeasonProfile,
@@ -214,6 +215,17 @@ export function useNflWeek(season: number, week: number, intervalMs = 30000): Nf
 export function useExternalNflInsights(season: number, week: number, intervalMs = 10 * 60 * 1000) {
   const key = `external-nfl-${season}-${week}`;
   return usePolledLoader<ExternalNflInsights>(() => api.getExternalNflInsights(season, week), key, intervalMs);
+}
+
+export function useTeamMarket(leagueId: string | undefined, intervalMs = 15000) {
+  return usePolledLoader<TeamMarket>(
+    () => {
+      if (!leagueId) throw new Error('League id is required.');
+      return api.getTeamMarket(leagueId);
+    },
+    leagueId ? `team-market-${leagueId}` : 'team-market-none',
+    intervalMs,
+  );
 }
 
 export interface LeagueStandingsResult {

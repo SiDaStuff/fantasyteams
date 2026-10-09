@@ -110,6 +110,9 @@ function CommissionerModal({
   const [benchEnabled, setBenchEnabled] = useState<boolean | null>(null);
   const [benchSlots, setBenchSlots] = useState<number | null>(null);
   const [benchLocks, setBenchLocks] = useState<boolean | null>(null);
+  const [maxTeams, setMaxTeams] = useState<number | null>(null);
+  const [maxActive, setMaxActive] = useState<number | null>(null);
+  const [tradingEnabled, setTradingEnabled] = useState<boolean | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDisband, setConfirmDisband] = useState(false);
   const [disbanding, setDisbanding] = useState(false);
@@ -120,20 +123,36 @@ function CommissionerModal({
   const resolvedBenchEnabled = benchEnabled ?? insights?.prefs.benchEnabled ?? league?.prefs.benchEnabled ?? false;
   const resolvedBenchSlots = benchSlots ?? insights?.prefs.benchSlots ?? league?.prefs.benchSlots ?? 1;
   const resolvedBenchLocks = benchLocks ?? insights?.prefs.benchLocksAtKickoff ?? league?.prefs.benchLocksAtKickoff ?? true;
+  const resolvedMaxTeams = maxTeams ?? insights?.prefs.maxTeamsPerPlayer ?? league?.prefs.maxTeamsPerPlayer ?? 16;
+  const resolvedMaxActive = maxActive ?? insights?.prefs.maxActiveTeams ?? league?.prefs.maxActiveTeams ?? 16;
+  const resolvedTradingEnabled = tradingEnabled ?? insights?.prefs.tradingEnabled ?? league?.prefs.tradingEnabled ?? false;
 
-  async function update(patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode; benchEnabled?: boolean; benchSlots?: number; benchLocksAtKickoff?: boolean }) {
+  async function update(patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode; benchEnabled?: boolean; benchSlots?: number; benchLocksAtKickoff?: boolean; maxTeamsPerPlayer?: number; maxActiveTeams?: number; tradingEnabled?: boolean }) {
+    if (patch.projectionsEnabled !== undefined) setEnabled(patch.projectionsEnabled);
+    if (patch.projectionsVisible !== undefined) setVisible(patch.projectionsVisible);
+    if (patch.scoringMode !== undefined) setScoringMode(patch.scoringMode);
+    if (patch.benchEnabled !== undefined) setBenchEnabled(patch.benchEnabled);
+    if (patch.benchSlots !== undefined) setBenchSlots(patch.benchSlots);
+    if (patch.benchLocksAtKickoff !== undefined) setBenchLocks(patch.benchLocksAtKickoff);
+    if (patch.maxTeamsPerPlayer !== undefined) setMaxTeams(patch.maxTeamsPerPlayer);
+    if (patch.maxActiveTeams !== undefined) setMaxActive(patch.maxActiveTeams);
+    if (patch.tradingEnabled !== undefined) setTradingEnabled(patch.tradingEnabled);
     try {
       await api.updateLeaguePrefs(leagueId, patch);
-      if (patch.projectionsEnabled !== undefined) setEnabled(patch.projectionsEnabled);
-      if (patch.projectionsVisible !== undefined) setVisible(patch.projectionsVisible);
-      if (patch.scoringMode !== undefined) setScoringMode(patch.scoringMode);
-      if (patch.benchEnabled !== undefined) setBenchEnabled(patch.benchEnabled);
-      if (patch.benchSlots !== undefined) setBenchSlots(patch.benchSlots);
-      if (patch.benchLocksAtKickoff !== undefined) setBenchLocks(patch.benchLocksAtKickoff);
       toast.push('success', 'Settings saved');
       onSynced();
     } catch (err) {
+      if (patch.projectionsEnabled !== undefined) setEnabled(null);
+      if (patch.projectionsVisible !== undefined) setVisible(null);
+      if (patch.scoringMode !== undefined) setScoringMode(null);
+      if (patch.benchEnabled !== undefined) setBenchEnabled(null);
+      if (patch.benchSlots !== undefined) setBenchSlots(null);
+      if (patch.benchLocksAtKickoff !== undefined) setBenchLocks(null);
+      if (patch.maxTeamsPerPlayer !== undefined) setMaxTeams(null);
+      if (patch.maxActiveTeams !== undefined) setMaxActive(null);
+      if (patch.tradingEnabled !== undefined) setTradingEnabled(null);
       toast.push('error', 'Could not save settings', apiErrorMessage(err));
+      onSynced();
     }
   }
 
@@ -237,23 +256,49 @@ function CommissionerModal({
             checked={resolvedBenchEnabled}
             onChange={(value) => void update({ benchEnabled: value })}
           />
+          {!resolvedBenchEnabled ? (
+            <div className="rounded-lg border border-line bg-navy-900 px-3.5 py-3">
+              <p className="text-sm font-semibold text-white">Team limit per player</p>
+              <p className="mt-0.5 text-xs text-slate-500">Also caps the number of draft rounds.</p>
+              <div className="mt-3 flex items-end gap-3">
+                <div className="w-32">
+                  <LimitSelect label="Max teams" value={resolvedMaxTeams} max={16} onChange={(value) => { setMaxTeams(value); setMaxActive(value); }} />
+                </div>
+                <Button size="sm" variant="outline" onClick={() => void update({ maxTeamsPerPlayer: resolvedMaxTeams, maxActiveTeams: resolvedMaxTeams })}>
+                  Save limit
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {resolvedBenchEnabled ? (
             <>
-              <div className="rounded-lg border border-line bg-navy-900 px-3.5 py-3">
-                <label htmlFor="benchSlots" className="flex items-center justify-between text-sm font-semibold text-white">
-                  Bench slots <span className="text-electric-300">{resolvedBenchSlots}</span>
-                </label>
-                <input
-                  id="benchSlots"
-                  type="range"
-                  min={1}
-                  max={16}
-                  value={resolvedBenchSlots}
-                  onChange={(event) => setBenchSlots(Number(event.target.value))}
-                  onPointerUp={() => void update({ benchSlots: resolvedBenchSlots })}
-                  onKeyUp={() => void update({ benchSlots: resolvedBenchSlots })}
-                  className="mt-2 h-8 w-full accent-electric-500"
-                />
+              <div className="space-y-3 rounded-lg border border-line bg-navy-900 px-3.5 py-3">
+                <p className="text-sm font-semibold text-white">Roster limits</p>
+                <p className="text-xs text-slate-500">Active teams plus bench slots must cover the total roster limit.</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <LimitSelect label="Max teams" value={resolvedMaxTeams} max={16} onChange={(value) => {
+                    setMaxTeams(value);
+                    const active = Math.min(resolvedMaxActive, value);
+                    setMaxActive(active);
+                    setBenchSlots(Math.max(resolvedBenchSlots, value - active));
+                  }} />
+                  <LimitSelect label="Max active" value={Math.min(resolvedMaxActive, resolvedMaxTeams)} max={resolvedMaxTeams} onChange={(value) => {
+                    setMaxActive(value);
+                    setBenchSlots(Math.max(resolvedBenchSlots, resolvedMaxTeams - value));
+                  }} />
+                  <LimitSelect label="Bench slots" value={resolvedBenchSlots} min={0} max={resolvedMaxTeams} onChange={setBenchSlots} />
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void update({
+                    maxTeamsPerPlayer: resolvedMaxTeams,
+                    maxActiveTeams: Math.min(resolvedMaxActive, resolvedMaxTeams),
+                    benchSlots: resolvedBenchSlots,
+                  })}
+                >
+                  Save roster limits
+                </Button>
               </div>
               <SettingRow
                 label="Lock at kickoff"
@@ -263,6 +308,16 @@ function CommissionerModal({
               />
             </>
           ) : null}
+        </div>
+
+        <div className="space-y-3 border-t border-line pt-5">
+          <h3 className="font-display text-sm font-semibold text-white">Player market</h3>
+          <SettingRow
+            label="Enable trading"
+            hint="Allow players to claim available teams and exchange teams with other owners."
+            checked={resolvedTradingEnabled}
+            onChange={(value) => void update({ tradingEnabled: value })}
+          />
         </div>
 
         <div className="border-t border-line pt-5">
@@ -418,11 +473,28 @@ function SettingRow({
       >
         <span
           className={cn(
-            'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform',
-            checked ? 'translate-x-[22px]' : 'translate-x-0.5',
+            'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200',
+            checked ? 'translate-x-5' : 'translate-x-0',
           )}
         />
       </button>
     </div>
+  );
+}
+
+function LimitSelect({ label, value, min = 1, max, onChange }: { label: string; value: number; min?: number; max: number; onChange: (value: number) => void }) {
+  return (
+    <label className="text-xs font-medium text-slate-400">
+      {label}
+      <select
+        value={Math.min(max, Math.max(min, value))}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="focus-ring mt-1.5 h-10 w-full rounded-lg border border-line bg-navy-950 px-2.5 text-sm font-semibold text-white"
+      >
+        {Array.from({ length: max - min + 1 }, (_, index) => min + index).map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </select>
+    </label>
   );
 }

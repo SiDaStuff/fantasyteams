@@ -40,7 +40,10 @@ export function LeagueLobby() {
   const draft = draftRoom?.draft ?? null;
 
   const memberCount = members.length;
-  const maxRounds = Math.max(1, Math.floor(32 / Math.max(memberCount, 1)));
+  const maxRounds = Math.min(
+    league?.prefs.maxTeamsPerPlayer ?? 16,
+    Math.max(1, Math.floor(32 / Math.max(memberCount, 1))),
+  );
 
   // Draft order, reconciled against the current roster (handles late joiners).
   const effectiveOrder = useMemo(() => {

@@ -13,6 +13,7 @@ import {
   computeLiveStandings,
   computeSeasonProgress,
   computeStandings,
+  isTeamOwned,
   type StandingOwner,
 } from './scoring-core';
 import { computeGamesVersion, projectSeason, type ProjectionResult } from './simulation-core';
@@ -120,12 +121,15 @@ function enrichStandings(rows: StandingRow[], games?: readonly NflGame[]): Stand
 function ownersForLeague(
   leagueValue: Record<string, unknown>,
   picks: Record<string, Record<string, unknown>> | null,
-  seasonKey: string,
+  currentWeek: number,
 ): StandingOwner[] {
   const members = membersOf(leagueValue);
   const lineups = (leagueValue.lineups && typeof leagueValue.lineups === 'object'
     ? leagueValue.lineups
     : {}) as Record<string, Record<string, Record<string, unknown>>>;
+  const ownershipByWeek = (leagueValue.teamOwnership && typeof leagueValue.teamOwnership === 'object'
+    ? leagueValue.teamOwnership
+    : {}) as Record<string, Record<string, string>>;
   const teamIdsByUser = new Map<string, string[]>();
   if (picks) {
     for (const pick of Object.values(picks)) {
@@ -137,14 +141,16 @@ function ownersForLeague(
       teamIdsByUser.set(userId, list);
     }
   }
-  void seasonKey;
   return Object.keys(members).map((userId) => {
     const member = memberValue(members, userId);
-    return {
+    const initialTeamIds = teamIdsByUser.get(userId) ?? [];
+    const owner: StandingOwner = {
       userId,
       displayName: str(member.displayName, 'Player'),
       photoURL: typeof member.photoURL === 'string' ? member.photoURL : null,
-      teamIds: teamIdsByUser.get(userId) ?? [],
+      teamIds: initialTeamIds,
+      initialTeamIds,
+      ownershipByWeek,
       benchedTeamIdsByWeek: Object.fromEntries(
         Object.entries(lineups[userId] ?? {}).map(([week, teams]) => [
           week,
@@ -152,6 +158,8 @@ function ownersForLeague(
         ]),
       ),
     };
+    owner.teamIds = Object.keys(NFL_TEAMS_BY_ID).filter((teamId) => isTeamOwned(owner, teamId, currentWeek));
+    return owner;
   });
 }
 
@@ -221,7 +229,7 @@ export interface LeagueInsightsPayload {
   season: number;
   currentWeek: number;
   totalWeeks: number;
-  prefs: { projectionsEnabled: boolean; projectionsVisible: boolean; scoringMode: ScoringMode; benchEnabled: boolean; benchSlots: number; benchLocksAtKickoff: boolean };
+  prefs: { projectionsEnabled: boolean; projectionsVisible: boolean; scoringMode: ScoringMode; benchEnabled: boolean; benchSlots: number; benchLocksAtKickoff: boolean; maxTeamsPerPlayer: number; maxActiveTeams: number; tradingEnabled: boolean };
   lineup: { week: number; benchedTeamIds: string[] };
   sync: { lastSyncAt: number | null; lastError: string | null };
   announcement: { text: string; by: string; at: number } | null;
@@ -260,7 +268,7 @@ export async function buildLeagueInsights(
 
   const picksSnapshot = await db.ref(`drafts/${leagueId}/picks`).once('value');
   const picks = picksSnapshot.exists() ? (picksSnapshot.val() as Record<string, Record<string, unknown>>) : null;
-  const owners = ownersForLeague(leagueValue, picks, String(season));
+  const owners = ownersForLeague(leagueValue, picks, currentWeek);
 
   // Preferences (read early — scoring mode changes how standings are computed).
   const prefsValue = (leagueValue.prefs ?? {}) as Record<string, unknown>;
@@ -272,6 +280,9 @@ export async function buildLeagueInsights(
     benchEnabled: bool(prefsValue.benchEnabled, false),
     benchSlots: Math.max(0, Math.min(16, num(prefsValue.benchSlots, 1))),
     benchLocksAtKickoff: bool(prefsValue.benchLocksAtKickoff, true),
+    maxTeamsPerPlayer: Math.max(1, Math.min(16, num(prefsValue.maxTeamsPerPlayer, 16))),
+    maxActiveTeams: Math.max(1, Math.min(16, num(prefsValue.maxActiveTeams, 16))),
+    tradingEnabled: bool(prefsValue.tradingEnabled, false),
   };
 
   // Official standings + weekly breakdown, in the league's scoring mode.
@@ -386,7 +397,7 @@ export async function runLeagueActivitySync(db: Database, input: SyncFanoutInput
     const picksSnapshot = await db.ref(`drafts/${leagueId}/picks`).once('value');
     if (!picksSnapshot.exists()) continue;
     const picks = picksSnapshot.val() as Record<string, Record<string, unknown>>;
-    const owners = ownersForLeague(leagueValue, picks, String(input.season));
+    const owners = ownersForLeague(leagueValue, picks, input.currentWeek);
     if (owners.every((owner) => owner.teamIds.length === 0)) continue;
 
     // New week.

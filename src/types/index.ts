@@ -322,6 +322,9 @@ export interface LeaguePrefs {
   benchEnabled: boolean;
   benchSlots: number;
   benchLocksAtKickoff: boolean;
+  maxTeamsPerPlayer: number;
+  maxActiveTeams: number;
+  tradingEnabled: boolean;
 }
 
 export interface ProjectionOwnerRow {
@@ -400,6 +403,29 @@ export interface LeagueInsights {
   leader: { userId: string; displayName: string; wins: number } | null;
   closestCompetitors: Array<{ userId: string; displayName: string; wins: number; behind: number }>;
   isCommissioner: boolean;
+}
+
+export interface TeamMarketEntry {
+  teamId: string;
+  ownerId: string | null;
+  ownerName: string | null;
+}
+
+export interface LeagueTrade {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  offeredTeamId: string;
+  requestedTeamId: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: Date;
+}
+
+export interface TeamMarket {
+  enabled: boolean;
+  effectiveWeek: number;
+  teams: TeamMarketEntry[];
+  trades: LeagueTrade[];
 }
 
 /* ─────────────────────────────── seasonRecords ─────────────────────────── */

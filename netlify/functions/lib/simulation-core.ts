@@ -15,7 +15,7 @@
  * suite stable and lets the server cache projections by a games-version key.
  */
 import type { NflGame, ScoringMode, TeamRecord } from '../../../src/types';
-import { computeTeamRecords, isTeamBenched, teamScoreFor } from './scoring-core';
+import { computeTeamRecords, isTeamBenched, isTeamOwned, scoringTeamIdsForOwner, teamScoreFor } from './scoring-core';
 import type { StandingOwner } from './scoring-core';
 
 /* ─────────────────────────── seeded randomness ─────────────────────────── */
@@ -185,8 +185,8 @@ export function projectSeason(
   const confirmed = new Map<string, number>(ids.map((id) => [id, 0]));
   for (const owner of owners) {
     let score = 0;
-    for (const teamId of owner.teamIds) {
-      score += teamScoreFor(games.filter((game) => !isTeamBenched(owner, teamId, game.week)), teamId, mode);
+    for (const teamId of scoringTeamIdsForOwner(owner)) {
+      score += teamScoreFor(games.filter((game) => isTeamOwned(owner, teamId, game.week) && !isTeamBenched(owner, teamId, game.week)), teamId, mode);
     }
     confirmed.set(owner.userId, score);
   }
@@ -224,7 +224,8 @@ export function projectSeason(
         const awayPts = Math.max(0, sampleNormal(rng, ppg.get(game.awayTeamId) ?? DEFAULT_PPG, Math.max(3, (ppg.get(game.awayTeamId) ?? DEFAULT_PPG) / 2)));
         for (const owner of owners) {
           let added = 0;
-          for (const teamId of owner.teamIds) {
+          for (const teamId of scoringTeamIdsForOwner(owner)) {
+            if (!isTeamOwned(owner, teamId, game.week)) continue;
             if (isTeamBenched(owner, teamId, game.week)) continue;
             if (game.homeTeamId === teamId) added += homePts;
             else if (game.awayTeamId === teamId) added += awayPts;
@@ -238,7 +239,7 @@ export function projectSeason(
       const winner = outcome === 'home' ? game.homeTeamId : outcome === 'away' ? game.awayTeamId : null;
       if (!winner) continue;
       for (const owner of owners) {
-        if (owner.teamIds.includes(winner) && !isTeamBenched(owner, winner, game.week)) {
+        if (scoringTeamIdsForOwner(owner).includes(winner) && isTeamOwned(owner, winner, game.week) && !isTeamBenched(owner, winner, game.week)) {
           wins.set(owner.userId, (wins.get(owner.userId) ?? 0) + 1);
         }
       }

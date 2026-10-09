@@ -13,6 +13,7 @@ import type {
   LeagueInsights,
   LeagueMember,
   LeaguePrefs,
+  TeamMarket,
   LeaguePreview,
   LeagueStandings,
   LeagueStatus,
@@ -129,6 +130,9 @@ function mapLeague(raw: Record<string, unknown>): League {
       benchEnabled: prefs.benchEnabled === true,
       benchSlots: Math.max(0, Number(prefs.benchSlots ?? 1) || 0),
       benchLocksAtKickoff: prefs.benchLocksAtKickoff !== false,
+      maxTeamsPerPlayer: Math.max(1, Number(prefs.maxTeamsPerPlayer ?? 16) || 16),
+      maxActiveTeams: Math.max(1, Number(prefs.maxActiveTeams ?? 16) || 16),
+      tradingEnabled: prefs.tradingEnabled === true,
     },
   };
 }
@@ -402,6 +406,9 @@ function mapInsights(raw: Record<string, unknown>): LeagueInsights {
     benchEnabled: prefsRaw.benchEnabled === true,
     benchSlots: Math.max(0, Number(prefsRaw.benchSlots ?? 1) || 0),
     benchLocksAtKickoff: prefsRaw.benchLocksAtKickoff !== false,
+    maxTeamsPerPlayer: Math.max(1, Number(prefsRaw.maxTeamsPerPlayer ?? 16) || 16),
+    maxActiveTeams: Math.max(1, Number(prefsRaw.maxActiveTeams ?? 16) || 16),
+    tradingEnabled: prefsRaw.tradingEnabled === true,
   };
   const syncRaw = (raw.sync ?? {}) as Record<string, unknown>;
   const projectionRaw = raw.projection as Record<string, unknown> | null;
@@ -741,7 +748,7 @@ export const api = {
 
   async updateLeaguePrefs(
     leagueId: string,
-    patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode; benchEnabled?: boolean; benchSlots?: number; benchLocksAtKickoff?: boolean },
+    patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode; benchEnabled?: boolean; benchSlots?: number; benchLocksAtKickoff?: boolean; maxTeamsPerPlayer?: number; maxActiveTeams?: number; tradingEnabled?: boolean },
   ): Promise<void> {
     await request<{ ok: true }>(`/leagues/${encodeURIComponent(leagueId)}/prefs`, {
       method: 'PATCH',
@@ -797,6 +804,44 @@ export const api = {
     return request<{ week: number; benchedTeamIds: string[] }>(`/leagues/${encodeURIComponent(leagueId)}/lineup`, {
       method: 'PATCH',
       body: JSON.stringify({ benchedTeamIds }),
+    });
+  },
+
+  async getTeamMarket(leagueId: string): Promise<TeamMarket> {
+    const raw = await request<Record<string, unknown>>(`/leagues/${encodeURIComponent(leagueId)}/market`);
+    return {
+      enabled: raw.enabled === true,
+      effectiveWeek: Math.max(1, Number(raw.effectiveWeek ?? 1)),
+      teams: ((raw.teams as Array<Record<string, unknown>> | undefined) ?? []).map((team) => ({
+        teamId: String(team.teamId ?? ''),
+        ownerId: typeof team.ownerId === 'string' ? team.ownerId : null,
+        ownerName: typeof team.ownerName === 'string' ? team.ownerName : null,
+      })),
+      trades: ((raw.trades as Array<Record<string, unknown>> | undefined) ?? []).map((trade) => ({
+        id: String(trade.id ?? ''),
+        fromUserId: String(trade.fromUserId ?? ''),
+        toUserId: String(trade.toUserId ?? ''),
+        offeredTeamId: String(trade.offeredTeamId ?? ''),
+        requestedTeamId: String(trade.requestedTeamId ?? ''),
+        status: (String(trade.status ?? 'pending') as 'pending' | 'accepted' | 'rejected'),
+        createdAt: date(trade.createdAt),
+      })),
+    };
+  },
+
+  async claimTeam(leagueId: string, teamId: string): Promise<void> {
+    await request(`/leagues/${encodeURIComponent(leagueId)}/market/claim/${encodeURIComponent(teamId)}`, { method: 'POST' });
+  },
+
+  async proposeTrade(leagueId: string, offeredTeamId: string, requestedTeamId: string): Promise<void> {
+    await request(`/leagues/${encodeURIComponent(leagueId)}/trades`, {
+      method: 'POST', body: JSON.stringify({ offeredTeamId, requestedTeamId }),
+    });
+  },
+
+  async respondToTrade(leagueId: string, tradeId: string, accept: boolean): Promise<void> {
+    await request(`/leagues/${encodeURIComponent(leagueId)}/trades/${encodeURIComponent(tradeId)}/respond`, {
+      method: 'POST', body: JSON.stringify({ accept }),
     });
   },
 };

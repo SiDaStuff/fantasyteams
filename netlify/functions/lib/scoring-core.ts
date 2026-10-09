@@ -157,6 +157,27 @@ export interface StandingOwner {
   teamIds: string[];
   /** Week-keyed lineup snapshots. A snapshot carries forward until replaced. */
   benchedTeamIdsByWeek?: Record<string, string[]>;
+  /** Original draft ownership plus week-effective trades/releases. */
+  initialTeamIds?: string[];
+  ownershipByWeek?: Record<string, Record<string, string>>;
+}
+
+export function isTeamOwned(owner: StandingOwner, teamId: string, week: number): boolean {
+  const history = owner.ownershipByWeek ?? {};
+  const changeWeek = Object.keys(history)
+    .map(Number)
+    .filter((value) => Number.isInteger(value) && value <= week && history[String(value)]?.[teamId] !== undefined)
+    .sort((a, b) => b - a)[0];
+  if (changeWeek !== undefined) return history[String(changeWeek)]?.[teamId] === owner.userId;
+  return (owner.initialTeamIds ?? owner.teamIds).includes(teamId);
+}
+
+export function scoringTeamIdsForOwner(owner: StandingOwner): string[] {
+  const ids = new Set(owner.initialTeamIds ?? owner.teamIds);
+  for (const changes of Object.values(owner.ownershipByWeek ?? {})) {
+    for (const [teamId, userId] of Object.entries(changes)) if (userId === owner.userId) ids.add(teamId);
+  }
+  return Array.from(ids);
 }
 
 export function isTeamBenched(owner: StandingOwner, teamId: string, week: number): boolean {
@@ -172,6 +193,7 @@ function scoringGamesForTeam(games: readonly NflGame[], owner: StandingOwner, te
   return games.filter(
     (game) =>
       (game.homeTeamId === teamId || game.awayTeamId === teamId) &&
+      isTeamOwned(owner, teamId, game.week) &&
       !isTeamBenched(owner, teamId, game.week),
   );
 }
@@ -233,7 +255,7 @@ export function computeStandings(
       })
       .sort((a, b) => b.points - a.points || a.teamId.localeCompare(b.teamId));
 
-    const totalWins = owner.teamIds.reduce((sum, teamId) => {
+    const totalWins = scoringTeamIdsForOwner(owner).reduce((sum, teamId) => {
       const scoringGames = scoringGamesForTeam(games, owner, teamId);
       const record = computeTeamRecords(scoringGames).get(teamId);
       return sum + (mode === 'points' ? teamPointsFor(scoringGames, teamId) : record?.wins ?? 0);
@@ -242,7 +264,8 @@ export function computeStandings(
     // Per-week breakdown for this owner's franchises.
     for (const week of weeks) {
       let score = 0;
-      for (const teamId of owner.teamIds) {
+      for (const teamId of scoringTeamIdsForOwner(owner)) {
+        if (!isTeamOwned(owner, teamId, week)) continue;
         if (isTeamBenched(owner, teamId, week)) continue;
         if (mode === 'points') {
           for (const game of games) {
@@ -353,7 +376,8 @@ export function computeLiveStandings(
       if (mode === 'points') {
         for (const owner of owners) {
           let added = 0;
-          for (const teamId of owner.teamIds) {
+          for (const teamId of scoringTeamIdsForOwner(owner)) {
+            if (!isTeamOwned(owner, teamId, game.week)) continue;
             if (isTeamBenched(owner, teamId, game.week)) continue;
             if (game.homeTeamId === teamId) added += game.homeScore ?? 0;
             else if (game.awayTeamId === teamId) added += game.awayScore ?? 0;
@@ -369,7 +393,7 @@ export function computeLiveStandings(
           : null;
       if (winner) {
         for (const owner of owners) {
-          if (owner.teamIds.includes(winner) && !isTeamBenched(owner, winner, game.week)) {
+          if (scoringTeamIdsForOwner(owner).includes(winner) && isTeamOwned(owner, winner, game.week) && !isTeamBenched(owner, winner, game.week)) {
             confirmed.set(owner.userId, (confirmed.get(owner.userId) ?? 0) + 1);
           }
         }
@@ -384,7 +408,8 @@ export function computeLiveStandings(
       // Points already banked in the live game count toward the live total.
       for (const owner of owners) {
         let added = 0;
-        for (const teamId of owner.teamIds) {
+        for (const teamId of scoringTeamIdsForOwner(owner)) {
+          if (!isTeamOwned(owner, teamId, game.week)) continue;
           if (isTeamBenched(owner, teamId, game.week)) continue;
           if (game.homeTeamId === teamId) added += game.homeScore ?? 0;
           else if (game.awayTeamId === teamId) added += game.awayScore ?? 0;
@@ -396,7 +421,7 @@ export function computeLiveStandings(
 
     if (game.homeScore === null || game.awayScore === null || game.homeScore === game.awayScore) continue;
     const leader = game.homeScore > game.awayScore ? game.homeTeamId : game.awayTeamId;
-    const owner = owners.find((entry) => entry.teamIds.includes(leader) && !isTeamBenched(entry, leader, game.week));
+    const owner = owners.find((entry) => scoringTeamIdsForOwner(entry).includes(leader) && isTeamOwned(entry, leader, game.week) && !isTeamBenched(entry, leader, game.week));
     if (owner) potential.set(owner.userId, (potential.get(owner.userId) ?? 0) + 1);
   }
 

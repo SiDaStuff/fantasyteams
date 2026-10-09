@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronUp, ExternalLink, Newspaper, TrendingUp } from 'lucide-react';
+import { ArrowLeftRight, ChevronDown, ChevronUp, ExternalLink, Newspaper, TrendingUp } from 'lucide-react';
 import { Alert } from '@/components/ui/Alert';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -16,18 +16,20 @@ import { LeaveLeagueButton } from '@/components/league/LeaveLeagueButton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { api, apiErrorMessage } from '@/lib/api';
-import { useExternalNflInsights, useLeagueInsights, useNflWeek } from '@/hooks/useLeagues';
+import { useExternalNflInsights, useLeagueInsights, useNflWeek, useTeamMarket } from '@/hooks/useLeagues';
+import { NFL_TEAMS_BY_ID } from '@/data/nflTeams';
 import { formatRelativeTime } from '@/lib/format';
 import { behindLabel, totalScoreLabel } from '@/lib/scoring';
 import { cn } from '@/lib/cn';
 import type { DraftRoomData, LeagueInsights, StandingRow } from '@/types';
 
-type Tab = 'overview' | 'standings' | 'teams' | 'draft';
+type Tab = 'overview' | 'standings' | 'teams' | 'market' | 'draft';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'standings', label: 'Standings' },
   { id: 'teams', label: 'My Teams' },
+  { id: 'market', label: 'Market' },
   { id: 'draft', label: 'Draft' },
 ];
 
@@ -120,6 +122,7 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
           {tab === 'overview' ? <OverviewTab insights={insights} myUid={myUid} leagueId={leagueId} /> : null}
           {tab === 'standings' ? <StandingsTab insights={insights} myUid={myUid} leagueId={leagueId} /> : null}
           {tab === 'teams' ? <TeamsTab insights={insights} myUid={myUid} leagueId={leagueId} onChanged={refresh} /> : null}
+          {tab === 'market' ? <MarketTab leagueId={leagueId} myUid={myUid} onChanged={refresh} /> : null}
           {tab === 'draft' ? (
             <Panel className="rounded-xl p-4 sm:p-5">
               <DraftBoard draft={room.draft} members={members} picks={room.picks} />
@@ -130,6 +133,108 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
 
     </div>
   );
+}
+
+function MarketTab({ leagueId, myUid, onChanged }: { leagueId: string; myUid: string | null; onChanged: () => void }) {
+  const market = useTeamMarket(leagueId);
+  const toast = useToast();
+  const [offered, setOffered] = useState('');
+  const [requested, setRequested] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  if (market.status === 'loading' || !market.data) return <div className="skeleton h-48 rounded-xl" />;
+  if (market.status === 'error') return <Alert variant="error" title="Could not load the player market">{market.error}</Alert>;
+  const data = market.data;
+  const available = data.teams.filter((team) => team.ownerId === null);
+  const unavailable = data.teams.filter((team) => team.ownerId !== null);
+  const mine = unavailable.filter((team) => team.ownerId === myUid);
+  const others = unavailable.filter((team) => team.ownerId !== myUid);
+  const pending = data.trades.filter((trade) => trade.status === 'pending');
+
+  async function run(action: () => Promise<void>, success: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await action();
+      toast.push('success', success);
+      setOffered('');
+      setRequested('');
+      market.refresh();
+      onChanged();
+    } catch (error) {
+      toast.push('error', 'Market action failed', apiErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <p className="app-kicker">Week {data.effectiveWeek}</p>
+        <h2 className="mt-1 font-display text-lg font-semibold text-white">Team market</h2>
+        <p className="mt-1 text-sm text-slate-500">Available teams can be claimed. Rostered teams require an accepted one-for-one trade.</p>
+      </div>
+      {!data.enabled ? <Alert variant="info" title="Trading is disabled">The commissioner can enable claims and trade offers in League settings.</Alert> : null}
+
+      {data.enabled ? (
+        <section className="rounded-xl border border-line bg-navy-900 p-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><ArrowLeftRight className="h-4 w-4 text-electric-300" />Offer a trade</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+            <MarketSelect label="You send" value={offered} teams={mine} onChange={setOffered} />
+            <MarketSelect label="You request" value={requested} teams={others} onChange={setRequested} showOwner />
+            <Button className="self-end" disabled={!offered || !requested || busy} isLoading={busy} onClick={() => void run(() => api.proposeTrade(leagueId, offered, requested), 'Trade offer sent')}>Send offer</Button>
+          </div>
+        </section>
+      ) : null}
+
+      {pending.length > 0 ? (
+        <section>
+          <h3 className="font-display text-base font-semibold text-white">Pending offers</h3>
+          <div className="mt-3 space-y-2">
+            {pending.map((trade) => {
+              const incoming = trade.toUserId === myUid;
+              const offer = NFL_TEAMS_BY_ID[trade.offeredTeamId];
+              const request = NFL_TEAMS_BY_ID[trade.requestedTeamId];
+              return (
+                <div key={trade.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-navy-900 px-3.5 py-3 text-sm">
+                  <span className="min-w-0 flex-1 text-slate-300">{incoming ? 'You receive' : 'You offered'} <strong className="text-white">{offer?.abbreviation ?? trade.offeredTeamId.toUpperCase()}</strong> for <strong className="text-white">{request?.abbreviation ?? trade.requestedTeamId.toUpperCase()}</strong></span>
+                  {incoming ? <><Button size="sm" onClick={() => void run(() => api.respondToTrade(leagueId, trade.id, true), 'Trade accepted')} disabled={busy}>Accept</Button><Button size="sm" variant="ghost" onClick={() => void run(() => api.respondToTrade(leagueId, trade.id, false), 'Trade declined')} disabled={busy}>Decline</Button></> : <span className="text-xs text-slate-500">Waiting for response</span>}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      <section>
+        <div className="flex items-baseline justify-between"><h3 className="font-display text-base font-semibold text-white">Available</h3><span className="text-xs text-slate-500">{available.length} teams</span></div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {available.length > 0 ? available.map((entry) => <MarketTeamRow key={entry.teamId} teamId={entry.teamId} action={data.enabled ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(() => api.claimTeam(leagueId, entry.teamId), 'Team added to your roster')}>Claim</Button> : undefined} />) : (
+            <p className="rounded-lg border border-dashed border-line px-3.5 py-6 text-center text-sm text-slate-500 sm:col-span-2">No teams are currently available.</p>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-baseline justify-between"><h3 className="font-display text-base font-semibold text-white">Not available</h3><span className="text-xs text-slate-500">{unavailable.length} teams</span></div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {unavailable.length > 0 ? unavailable.map((entry) => <MarketTeamRow key={entry.teamId} teamId={entry.teamId} owner={entry.ownerId === myUid ? 'You' : entry.ownerName ?? 'Player'} />) : (
+            <p className="rounded-lg border border-dashed border-line px-3.5 py-6 text-center text-sm text-slate-500 sm:col-span-2">No teams are currently rostered.</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MarketSelect({ label, value, teams, onChange, showOwner = false }: { label: string; value: string; teams: Array<{ teamId: string; ownerName: string | null }>; onChange: (value: string) => void; showOwner?: boolean }) {
+  return <label className="text-xs font-medium text-slate-400">{label}<select value={value} onChange={(event) => onChange(event.target.value)} className="focus-ring mt-1.5 h-11 w-full rounded-lg border border-line bg-navy-950 px-3 text-sm text-white"><option value="">Choose a team…</option>{teams.map((entry) => { const team = NFL_TEAMS_BY_ID[entry.teamId]; return <option key={entry.teamId} value={entry.teamId}>{team?.name ?? entry.teamId}{showOwner && entry.ownerName ? ` — ${entry.ownerName}` : ''}</option>; })}</select></label>;
+}
+
+function MarketTeamRow({ teamId, owner, action }: { teamId: string; owner?: string; action?: ReactNode }) {
+  const team = NFL_TEAMS_BY_ID[teamId];
+  return <div className="flex items-center gap-3 rounded-lg border border-line bg-navy-900 px-3.5 py-3"><TeamLogo teamId={teamId} size="sm" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-white">{team?.name ?? teamId}</p>{owner ? <p className="text-xs text-slate-500">Owned by {owner}</p> : <p className="text-xs text-emerald-300">Available</p>}</div>{action}</div>;
 }
 
 /* ─────────────────────────────── overview ─────────────────────────────── */
@@ -576,7 +681,13 @@ function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueIn
     <div className="space-y-8">
       {mine ? (
         <section>
-          <h2 className="font-display text-lg font-semibold text-white">My Teams</h2>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-lg font-semibold text-white">My Teams</h2>
+            <span className="text-xs text-slate-500">
+              {mine.teams.length}/{insights.prefs.maxTeamsPerPlayer} rostered
+              {insights.prefs.benchEnabled ? ` · ${activeTeams.length}/${insights.prefs.maxActiveTeams} active` : ''}
+            </span>
+          </div>
           {mine.teams.length === 0 ? (
             <p className="mt-3 text-sm text-slate-500">No teams drafted yet.</p>
           ) : (
@@ -616,7 +727,7 @@ function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueIn
                   team={team}
                   leagueId={leagueId}
                   mode={mode}
-                  action={<Button size="sm" variant="outline" disabled={busyTeam !== null} onClick={() => void setBenched(team.teamId, false)}>Activate</Button>}
+                  action={<Button size="sm" variant="outline" disabled={busyTeam !== null || activeTeams.length >= insights.prefs.maxActiveTeams} onClick={() => void setBenched(team.teamId, false)}>Activate</Button>}
                 />
               ))}
             </div>
