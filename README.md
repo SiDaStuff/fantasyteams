@@ -82,6 +82,9 @@ requires at least Node.js 24.12.
    - `VITE_FIREBASE_*` — the *public* web-app config (Authentication only).
    - `FIREBASE_SERVICE_ACCOUNT` — the service-account JSON (server-only secret;
      never `VITE_`-prefixed, so it is never shipped to the browser).
+   - `THE_ODDS_API_KEY` — optional server-only key for consensus NFL moneyline
+     forecasts. Without it, scores, in-app projections, and ESPN news continue
+     to work; market-outlook cards are simply omitted.
 
 4. **Run locally**
 

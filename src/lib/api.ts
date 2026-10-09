@@ -2,6 +2,7 @@ import { getFirebaseAuth } from '@/lib/firebase';
 import { toErrorMessage } from '@/lib/errors';
 import type {
   Draft,
+  ExternalNflInsights,
   DraftFormat,
   DraftPick,
   DraftPickTimer,
@@ -151,6 +152,14 @@ function mapProfile(raw: Record<string, unknown>): UserProfile {
 function nullableDate(value: unknown): Date | null {
   const ms = Number(value);
   return Number.isFinite(ms) && ms > 0 ? new Date(ms) : null;
+}
+
+function externalDate(value: unknown): Date | null {
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? new Date(ms) : null;
+  }
+  return nullableDate(value);
 }
 
 function mapDraft(raw: Record<string, unknown>): Draft {
@@ -414,6 +423,7 @@ function mapInsights(raw: Record<string, unknown>): LeagueInsights {
           owners: ((projectionRaw.owners as Array<Record<string, unknown>> | undefined) ?? []).map(mapProjectionOwner),
         }
       : null,
+    projectionError: typeof raw.projectionError === 'string' ? raw.projectionError : null,
     activity: ((raw.activity as Array<Record<string, unknown>> | undefined) ?? []).map(mapActivityEvent),
     leader: raw.leader
       ? {
@@ -632,6 +642,38 @@ export const api = {
       week: Number(raw.week ?? 0),
       currentWeek: Number(raw.currentWeek ?? 0),
       games: (raw.games ?? []).map(mapNflGame),
+    };
+  },
+
+  async getExternalNflInsights(season: number, week: number): Promise<ExternalNflInsights> {
+    const raw = await request<{
+      news?: Array<Record<string, unknown>>;
+      forecasts?: Array<Record<string, unknown>>;
+      updatedAt?: unknown;
+      oddsConfigured?: unknown;
+      errors?: unknown;
+    }>(`/nfl/external?season=${season}&week=${week}`);
+    return {
+      news: (raw.news ?? []).map((item) => ({
+        id: String(item.id ?? ''),
+        headline: String(item.headline ?? ''),
+        description: String(item.description ?? ''),
+        url: String(item.url ?? ''),
+        publishedAt: externalDate(item.publishedAt),
+        source: String(item.source ?? 'External'),
+      })),
+      forecasts: (raw.forecasts ?? []).map((item) => ({
+        id: String(item.id ?? ''),
+        homeTeamId: String(item.homeTeamId ?? ''),
+        awayTeamId: String(item.awayTeamId ?? ''),
+        commenceTime: externalDate(item.commenceTime),
+        homeProbability: Number(item.homeProbability ?? 0),
+        awayProbability: Number(item.awayProbability ?? 0),
+        bookmakers: Number(item.bookmakers ?? 0),
+      })),
+      updatedAt: nullableDate(raw.updatedAt) ?? new Date(),
+      oddsConfigured: raw.oddsConfigured === true,
+      errors: Array.isArray(raw.errors) ? raw.errors.map(String) : [],
     };
   },
 

@@ -44,7 +44,7 @@ export function CommissionerMenu({
 
   return (
     <>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={() => setOpen(true)} leftIcon={<Settings className="h-4 w-4" />}>
           Manage league
         </Button>

@@ -3,6 +3,7 @@ import { api, apiErrorMessage } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import type {
   DraftRoomData,
+  ExternalNflInsights,
   League,
   LeagueInsights,
   LeagueMember,
@@ -208,6 +209,11 @@ export function useNflWeek(season: number, week: number, intervalMs = 30000): Nf
   const key = `nfl-week-${season}-${week}`;
   const { data, status, error, refresh } = usePolledLoader(() => api.getNflWeek(season, week), key, intervalMs);
   return { weekData: data, status, error, refresh };
+}
+
+export function useExternalNflInsights(season: number, week: number, intervalMs = 10 * 60 * 1000) {
+  const key = `external-nfl-${season}-${week}`;
+  return usePolledLoader<ExternalNflInsights>(() => api.getExternalNflInsights(season, week), key, intervalMs);
 }
 
 export interface LeagueStandingsResult {

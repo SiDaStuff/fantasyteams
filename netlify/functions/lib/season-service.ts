@@ -181,8 +181,13 @@ async function ensureProjectionCached(
 ): Promise<CachedProjection> {
   const version = computeGamesVersion(games);
   const ref = db.ref(`nfl/seasons/${season}/projections/${leagueId}/${mode}`);
-  const snapshot = await ref.once('value');
-  const existing = snapshot.val() as CachedProjection | null;
+  let existing: CachedProjection | null = null;
+  try {
+    const snapshot = await ref.once('value');
+    existing = snapshot.val() as CachedProjection | null;
+  } catch (error) {
+    console.warn(`projection cache read failed for ${leagueId}; computing directly`, error);
+  }
   const now = Date.now();
 
   if (existing && existing.version === version && now - Number(existing.computedAt ?? 0) < PROJECTION_TTL_MS) {
@@ -191,7 +196,11 @@ async function ensureProjectionCached(
 
   const data = projectSeason(season, owners, games, { iterations: 2000, seedSalt, mode });
   const next: CachedProjection = { version, computedAt: now, data };
-  await ref.set(next);
+  // Cache failures should make the next request recompute, not hide otherwise
+  // valid projections from every league member.
+  await ref.set(next).catch((error) => {
+    console.warn(`projection cache write failed for ${leagueId}; returning uncached result`, error);
+  });
   return next;
 }
 
@@ -210,6 +219,7 @@ export interface LeagueInsightsPayload {
   weeklyWins: Record<string, Record<string, number>>;
   live: ReturnType<typeof computeLiveStandings> | null;
   projection: { computedAt: number; iterations: number; remainingGames: number; owners: RawProjectionOwner[] } | null;
+  projectionError: string | null;
   projectionEnabled: boolean;
   activity: Array<{ key: string; type: LeagueActivityType; message: string; timestamp: number }>;
   leader: { userId: string; displayName: string; wins: number } | null;
@@ -229,8 +239,12 @@ export async function buildLeagueInsights(
   if (!members[uid]) throw new InsightsError('forbidden', 'You are not a member of this league.');
 
   const meta = await readCurrentMeta(db);
-  const season = meta.season > 0 ? meta.season : 2026;
+  const leagueSeason = num(leagueValue.season, 0);
+  const season = leagueSeason > 0 ? leagueSeason : meta.season > 0 ? meta.season : 2026;
   const games = await readSeasonGames(db, season);
+  const seasonMetaSnapshot = await db.ref(`nfl/seasons/${season}/meta`).once('value');
+  const seasonMeta = (seasonMetaSnapshot.exists() ? seasonMetaSnapshot.val() : {}) as Record<string, unknown>;
+  const currentWeek = num(seasonMeta.currentWeek, season === meta.season ? meta.currentWeek : 1);
 
   const picksSnapshot = await db.ref(`drafts/${leagueId}/picks`).once('value');
   const picks = picksSnapshot.exists() ? (picksSnapshot.val() as Record<string, Record<string, unknown>>) : null;
@@ -257,17 +271,25 @@ export async function buildLeagueInsights(
 
   // Cached projections.
   let projectionPayload: LeagueInsightsPayload['projection'] = null;
+  let projectionError: string | null = null;
   if (prefs.projectionsEnabled && owners.some((owner) => owner.teamIds.length > 0) && games.some((game) => game.week >= 1)) {
-    const cached = await ensureProjectionCached(db, leagueId, season, owners, games, leagueId, scoringMode);
-    projectionPayload = {
-      computedAt: cached.computedAt,
-      iterations: cached.data.iterations,
-      remainingGames: cached.data.remainingGames,
-      owners: decodeProjection(cached.data, members),
-    };
+    try {
+      const cached = await ensureProjectionCached(db, leagueId, season, owners, games, leagueId, scoringMode);
+      projectionPayload = {
+        computedAt: cached.computedAt,
+        iterations: cached.data.iterations,
+        remainingGames: cached.data.remainingGames,
+        owners: decodeProjection(cached.data, members),
+      };
+    } catch (error) {
+      projectionError = error instanceof Error ? error.message : 'Projection calculation failed.';
+      console.warn(`projection failed for league ${leagueId}: ${projectionError}`);
+    }
+  } else if (prefs.projectionsEnabled && owners.some((owner) => owner.teamIds.length > 0)) {
+    projectionError = 'The season schedule has not synced yet.';
   }
 
-  const progress = computeSeasonProgress(games, meta.currentWeek);
+  const progress = computeSeasonProgress(games, currentWeek);
 
   // Leader + closest competitors from the official standings.
   const leaderRow = standings[0];
@@ -292,23 +314,22 @@ export async function buildLeagueInsights(
       : null;
 
   // Sync health.
-  const metaSnapshot = await db.ref(`nfl/seasons/${season}/meta`).once('value');
-  const seasonMeta = (metaSnapshot.exists() ? metaSnapshot.val() : {}) as Record<string, unknown>;
   const lastError = (seasonMeta.lastError as Record<string, unknown> | undefined)?.message;
 
   return {
     leagueId,
     season,
-    currentWeek: meta.currentWeek,
+    currentWeek,
     totalWeeks: progress.totalWeeks,
     prefs,
-    sync: { lastSyncAt: meta.lastSyncAt || null, lastError: typeof lastError === 'string' ? lastError : null },
+    sync: { lastSyncAt: num(seasonMeta.lastSyncAt, meta.lastSyncAt) || null, lastError: typeof lastError === 'string' ? lastError : null },
     announcement,
     progress,
     standings,
     weeklyWins: computed.weeklyWins,
     live,
     projection: projectionPayload,
+    projectionError,
     projectionEnabled: prefs.projectionsEnabled,
     activity: activity.map((event) => ({ ...event, timestamp: event.timestamp.getTime() })),
     leader,

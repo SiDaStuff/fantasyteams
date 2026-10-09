@@ -216,6 +216,33 @@ export interface NflMeta {
   lastSyncAt: Date | null;
 }
 
+export interface ExternalNewsItem {
+  id: string;
+  headline: string;
+  description: string;
+  url: string;
+  publishedAt: Date | null;
+  source: string;
+}
+
+export interface MarketForecast {
+  id: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  commenceTime: Date | null;
+  homeProbability: number;
+  awayProbability: number;
+  bookmakers: number;
+}
+
+export interface ExternalNflInsights {
+  news: ExternalNewsItem[];
+  forecasts: MarketForecast[];
+  updatedAt: Date;
+  oddsConfigured: boolean;
+  errors: string[];
+}
+
 /* ───────────────────────────── league season ──────────────────────────── */
 
 /** A league owner with their drafted franchises. */
@@ -363,6 +390,7 @@ export interface LeagueInsights {
   weeklyWins: Record<string, Record<string, number>>;
   live: LiveStandings | null;
   projection: SeasonProjection | null;
+  projectionError: string | null;
   activity: LeagueActivityEvent[];
   leader: { userId: string; displayName: string; wins: number } | null;
   closestCompetitors: Array<{ userId: string; displayName: string; wins: number; behind: number }>;

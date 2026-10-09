@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { ArrowRight, KeyRound, Plus, Users } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Alert } from '@/components/ui/Alert';
@@ -27,17 +27,29 @@ export function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">My Leagues</h1>
-        <div className="flex gap-2.5">
-          <Button to="/join" variant="outline">
-            Join with a code
-          </Button>
-          <Button to="/leagues/new" leftIcon={<Plus className="h-4 w-4" />}>
-            Create
-          </Button>
+    <div className="app-page">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="app-kicker">League center</p>
+          <h1 className="mt-1 font-display text-3xl font-bold tracking-tight text-white sm:text-4xl">My Leagues</h1>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-400">Open a league to check your teams, this week’s games, standings, and title odds.</p>
         </div>
+        <Button to="/leagues/new" leftIcon={<Plus className="h-4 w-4" />} className="w-full sm:w-auto">
+          Create league
+        </Button>
+      </div>
+
+      <div className="mt-7 grid gap-3 sm:grid-cols-2">
+        <Link to="/join" className="focus-ring group flex items-center gap-4 rounded-xl border border-line bg-navy-900 p-4 transition-colors hover:border-electric-400/40 hover:bg-navy-850">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-electric-500/12 text-electric-300"><KeyRound className="h-5 w-5" /></span>
+          <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-white">Join a league</span><span className="mt-0.5 block text-xs text-slate-500">Enter an invite code from a commissioner.</span></span>
+          <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-colors group-hover:text-electric-300" />
+        </Link>
+        <Link to="/nfl" className="focus-ring group flex items-center gap-4 rounded-xl border border-line bg-navy-900 p-4 transition-colors hover:border-electric-400/40 hover:bg-navy-850">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-electric-500/12 text-electric-300"><Users className="h-5 w-5" /></span>
+          <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-white">NFL scores</span><span className="mt-0.5 block text-xs text-slate-500">Follow the active week and your drafted teams.</span></span>
+          <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-colors group-hover:text-electric-300" />
+        </Link>
       </div>
 
       {leaguesStatus === 'loading' ? (
@@ -58,11 +70,14 @@ export function Dashboard() {
 
       {leaguesStatus === 'ready' ? (
         rankedLeagues.length > 0 ? (
-          <div className="mt-6 divide-y divide-line/60 border-y border-line/60">
+          <section className="mt-8" aria-labelledby="league-list-title">
+            <div className="mb-3 flex items-center justify-between"><h2 id="league-list-title" className="font-display text-lg font-semibold text-white">Your leagues</h2><span className="text-xs text-slate-500">{rankedLeagues.length} total</span></div>
+            <div className="grid gap-3 md:grid-cols-2">
             {rankedLeagues.map((league) => (
               <LeagueRow key={league.id} league={league} />
             ))}
-          </div>
+            </div>
+          </section>
         ) : (
           <div className="mt-12">
             <EmptyState
@@ -80,7 +95,7 @@ export function Dashboard() {
 
 function LeagueRow({ league }: { league: League }) {
   return (
-    <Link to={`/leagues/${league.id}`} className="group flex items-center justify-between gap-4 py-4 transition-colors">
+    <Link to={`/leagues/${league.id}`} className="focus-ring group flex min-w-0 items-center justify-between gap-4 rounded-xl border border-line bg-navy-900 p-4 transition-colors hover:border-electric-400/40 hover:bg-navy-850">
       <div className="min-w-0">
         <p className="truncate font-display text-base font-semibold text-white transition-colors group-hover:text-electric-300">
           {league.name}
@@ -89,7 +104,7 @@ function LeagueRow({ league }: { league: League }) {
           {league.memberCount}/{league.maxParticipants} {pluralize(league.memberCount, 'player', 'players')} · {league.season} season
         </p>
       </div>
-      <LeagueStatusBadge status={league.status} />
+      <div className="flex shrink-0 items-center gap-3"><LeagueStatusBadge status={league.status} /><ArrowRight className="h-4 w-4 text-slate-600 transition-colors group-hover:text-electric-300" /></div>
     </Link>
   );
 }

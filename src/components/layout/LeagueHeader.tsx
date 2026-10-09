@@ -28,10 +28,10 @@ export function LeagueHeader({
         My Leagues
       </Link>
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <h1 className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
+      <div className="mt-3 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="min-w-0 break-words font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
           {leagueName}
-          <span className="ml-2 text-base font-medium text-slate-500">{season}</span>
+          <span className="ml-2 whitespace-nowrap text-sm font-medium text-slate-500 sm:text-base">{season}</span>
         </h1>
         {right}
       </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, Newspaper, TrendingUp } from 'lucide-react';
 import { Alert } from '@/components/ui/Alert';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -14,7 +14,7 @@ import { CommissionerMenu } from '@/components/league/CommissionerMenu';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { api, apiErrorMessage } from '@/lib/api';
-import { useLeagueInsights, useNflWeek } from '@/hooks/useLeagues';
+import { useExternalNflInsights, useLeagueInsights, useNflWeek } from '@/hooks/useLeagues';
 import { formatRelativeTime } from '@/lib/format';
 import { behindLabel, totalScoreLabel } from '@/lib/scoring';
 import { cn } from '@/lib/cn';
@@ -56,9 +56,25 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
   }
 
   return (
-    <div className="animate-fade-up">
-      <LeagueHeader leagueId={league.id} leagueName={league.name} season={league.season}>
-        <nav className="-mb-px flex gap-5 overflow-x-auto" aria-label="League sections">
+    <div className="app-page animate-fade-up">
+      <LeagueHeader
+        leagueId={league.id}
+        leagueName={league.name}
+        season={league.season}
+        right={isCommissioner ? (
+          <CommissionerMenu
+            leagueId={leagueId}
+            insights={insights}
+            members={room.members}
+            currentUserId={myUid}
+            onSynced={refresh}
+            syncing={syncing}
+            setSyncing={setSyncing}
+            onSync={() => void handleSync()}
+          />
+        ) : undefined}
+      >
+        <nav className="league-tabs -mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0" aria-label="League sections">
           {TABS.map((item) => (
             <button
               key={item.id}
@@ -66,8 +82,8 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
               onClick={() => setTab(item.id)}
               aria-current={tab === item.id ? 'page' : undefined}
               className={cn(
-                'focus-ring shrink-0 border-b-2 pb-2.5 pt-0.5 text-sm font-semibold transition-colors',
-                tab === item.id ? 'border-electric-400 text-white' : 'border-transparent text-slate-400 hover:text-slate-200',
+                'focus-ring shrink-0 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors',
+                tab === item.id ? 'border-electric-400/45 bg-electric-500/12 text-electric-300' : 'border-transparent text-slate-400 hover:bg-white/5 hover:text-slate-200',
               )}
             >
               {item.label}
@@ -109,18 +125,6 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
         </div>
       )}
 
-      {isCommissioner ? (
-        <CommissionerMenu
-          leagueId={leagueId}
-          insights={insights}
-          members={room.members}
-          currentUserId={myUid}
-          onSynced={refresh}
-          syncing={syncing}
-          setSyncing={setSyncing}
-          onSync={() => void handleSync()}
-        />
-      ) : null}
     </div>
   );
 }
@@ -135,6 +139,7 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
 
   const myTeams = me?.teams ?? [];
   const weekData = useNflWeek(insights.season, progress.currentWeek, 60000);
+  const external = useExternalNflInsights(insights.season, progress.currentWeek);
   const myTeamIds = new Set((me?.teams ?? []).map((team) => team.teamId));
 
   const myGamesThisWeek = (weekData.weekData?.games ?? []).filter(
@@ -143,6 +148,12 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
 
   return (
     <div className="space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-4 text-xs text-slate-500">
+        <span>Active week: <strong className="font-semibold text-slate-300">Week {progress.currentWeek}</strong></span>
+        <span>{insights.sync.lastSyncAt ? `Scores updated ${formatRelativeTime(insights.sync.lastSyncAt)}` : 'Waiting for the first score sync'}</span>
+      </div>
+      {insights.sync.lastError ? <Alert variant="warning" title="Score feed delayed">{insights.sync.lastError}</Alert> : null}
+
       {/* My standing — the primary fact */}
       {me ? (
         <section>
@@ -253,9 +264,72 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
         </section>
       ) : null}
 
+      <ExternalContextSection
+        insights={external.data}
+        loading={external.status === 'loading'}
+        myTeamIds={myTeamIds}
+      />
+
       {/* Activity — secondary, collapsed by default */}
       <ActivitySection insights={insights} />
     </div>
+  );
+}
+
+function ExternalContextSection({
+  insights,
+  loading,
+  myTeamIds,
+}: {
+  insights: ReturnType<typeof useExternalNflInsights>['data'];
+  loading: boolean;
+  myTeamIds: Set<string>;
+}) {
+  if (loading) return <div className="skeleton h-28 rounded-xl" aria-label="Loading NFL news and forecasts" />;
+  if (!insights || (insights.news.length === 0 && insights.forecasts.length === 0)) return null;
+  const forecasts = insights.forecasts
+    .filter((forecast) => myTeamIds.has(forecast.homeTeamId) || myTeamIds.has(forecast.awayTeamId))
+    .slice(0, 3);
+
+  return (
+    <section aria-labelledby="league-context-title">
+      <div className="flex items-end justify-between gap-3">
+        <div><p className="app-kicker">Around the league</p><h2 id="league-context-title" className="mt-1 font-display text-lg font-semibold text-white">News & market outlook</h2></div>
+        <span className="text-[10px] text-slate-500">External sources</span>
+      </div>
+
+      {forecasts.length > 0 ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {forecasts.map((forecast) => {
+            const homePct = Math.round(forecast.homeProbability * 100);
+            const awayPct = Math.round(forecast.awayProbability * 100);
+            return (
+              <div key={forecast.id} className="rounded-xl border border-line bg-navy-900 p-3.5">
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500"><TrendingUp className="h-3.5 w-3.5 text-electric-300" />Consensus forecast · {forecast.bookmakers} books</div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2"><TeamLogo teamId={forecast.awayTeamId} size="sm" /><strong className="text-sm text-white">{awayPct}%</strong></div>
+                  <span className="text-[10px] text-slate-600">at</span>
+                  <div className="flex items-center gap-2"><strong className="text-sm text-white">{homePct}%</strong><TeamLogo teamId={forecast.homeTeamId} size="sm" /></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {insights.news.length > 0 ? (
+        <div className="mt-4 divide-y divide-line/60 border-y border-line/60">
+          {insights.news.slice(0, 4).map((item) => (
+            <a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="focus-ring group flex items-start gap-3 py-3.5">
+              <Newspaper className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+              <span className="min-w-0 flex-1"><span className="block text-sm font-medium leading-snug text-slate-200 transition-colors group-hover:text-electric-300">{item.headline}</span><span className="mt-1 block text-[10px] text-slate-500">{item.source}{item.publishedAt ? ` · ${formatRelativeTime(item.publishedAt)}` : ''}</span></span>
+              <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-600" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      <p className="mt-2 text-[10px] leading-relaxed text-slate-600">Market percentages are consensus estimates, not guarantees. News opens at the publisher.</p>
+    </section>
   );
 }
 
@@ -326,6 +400,8 @@ function StandingsTab({ insights, myUid, leagueId }: { insights: LeagueInsights;
             Projections
             {showProjections ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
+        ) : insights.prefs.projectionsEnabled ? (
+          <span className="text-right text-xs text-amber-300">{insights.projectionError ?? 'Projections are preparing'}</span>
         ) : null}
       </div>
 
@@ -342,7 +418,7 @@ function StandingsTab({ insights, myUid, leagueId }: { insights: LeagueInsights;
         <section className="animate-fade-in">
           <h3 className="font-display text-base font-semibold text-white">Projections</h3>
           <p className="mt-1 text-xs text-slate-500">
-            Estimated from the {projection.remainingGames} games left. These are predictions, not results.
+            Updated {formatRelativeTime(projection.computedAt)} from {projection.remainingGames} remaining games and {projection.iterations.toLocaleString()} simulations. These are predictions, not results.
           </p>
           <div className="mt-4 divide-y divide-line/60 border-y border-line/60">
             {projection.owners

@@ -112,6 +112,30 @@ function scoresHash(game: NflGame): string {
   ].join('|');
 }
 
+/**
+ * Derives the week users should see from normalized schedule state. Provider
+ * metadata is useful, but it can lag at week boundaries or point at preseason.
+ */
+export function deriveActiveWeek(games: readonly NflGame[], now = Date.now(), fallback = 1): number {
+  const regular = games.filter((game) => game.week >= 1 && game.week <= SCHEDULE_WEEKS && !game.postponed);
+  const liveWeeks = regular
+    .filter((game) => game.status === 'in_progress' || game.status === 'halftime')
+    .map((game) => game.week);
+  if (liveWeeks.length > 0) return Math.min(...liveWeeks);
+
+  const scheduled = regular
+    .filter((game) => game.status === 'scheduled' && Date.parse(game.date) >= now - 6 * 60 * 60 * 1000)
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  if (scheduled[0]) return scheduled[0].week;
+
+  const completed = regular
+    .filter((game) => game.final && Date.parse(game.date) <= now)
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+  if (completed[0]) return completed[0].week;
+
+  return Math.min(SCHEDULE_WEEKS, Math.max(1, fallback));
+}
+
 /* ─────────────────────────── reads (from cache) ─────────────────────────── */
 
 interface SeasonMeta {
@@ -328,23 +352,25 @@ export async function storeScoreboards(db: Database, input: {
   }
   await db.ref(`nfl/seasons/${season}/records`).set(recordsObject);
 
+  const activeWeek = deriveActiveWeek(cached, now, currentWeek);
+
   // League activity (wins earned, leadership changes, new weeks).
-  if (newlyFinal.length > 0 || currentWeek !== input.previousWeek) {
-    await runLeagueActivitySync(db, { season, currentWeek, previousWeek: input.previousWeek, games: cached, newlyFinal });
+  if (newlyFinal.length > 0 || activeWeek !== input.previousWeek) {
+    await runLeagueActivitySync(db, { season, currentWeek: activeWeek, previousWeek: input.previousWeek, games: cached, newlyFinal });
   }
 
   const maxWeek = Math.max(currentWeek, ...weeks.map((week) => week.week));
   const meta = await readCurrentMeta(db);
   await db.ref(`nfl/seasons/${season}/meta`).set({
     season,
-    currentWeek,
+    currentWeek: activeWeek,
     lastFullSyncWeek: Math.max(meta.lastFullSyncWeek, maxWeek || currentWeek),
     lastSyncAt: now,
     provider: input.provider,
     lastError: null,
     lastErrorAt: 0,
   });
-  await db.ref('nfl/current').set({ season, currentWeek, lastSyncAt: now });
+  await db.ref('nfl/current').set({ season, currentWeek: activeWeek, lastSyncAt: now });
 
   return changed;
 }
@@ -398,13 +424,19 @@ export async function syncNflData(db: Database): Promise<{ season: number; curre
 
     // 4) Scope the refresh. The very first run seeds the full schedule so
     //    projections and season progress see every remaining game; afterwards
-    //    only the current week (plus any catch-up weeks) is refreshed.
+    //    refresh the active week and its neighbors so Thursday/Monday boundary
+    //    changes are picked up even when provider metadata lags.
     const weeks =
       meta.lastFullSyncWeek === 0 || currentWeek === 0
         ? Array.from({ length: SCHEDULE_WEEKS }, (_, i) => i + 1)
         : meta.lastFullSyncWeek >= currentWeek
-          ? [currentWeek]
-          : Array.from({ length: currentWeek - meta.lastFullSyncWeek }, (_, i) => meta.lastFullSyncWeek + i + 1);
+          ? Array.from(new Set([currentWeek - 1, currentWeek, currentWeek + 1])).filter((week) => week >= 1 && week <= SCHEDULE_WEEKS)
+          : Array.from(new Set([
+              ...Array.from({ length: currentWeek - meta.lastFullSyncWeek }, (_, i) => meta.lastFullSyncWeek + i + 1),
+              currentWeek - 1,
+              currentWeek,
+              currentWeek + 1,
+            ])).filter((week) => week >= 1 && week <= SCHEDULE_WEEKS);
 
     // 5) Per-week scoreboards. "Success" means events that actually normalize
     //    into valid games — never an empty/`200`-but-bogus payload.
@@ -468,6 +500,8 @@ export async function syncNflData(db: Database): Promise<{ season: number; curre
       previousWeek: meta.currentWeek,
       provider: usedFallback ? 'espn-schedule' : 'espn',
     });
+    const storedMeta = await readCurrentMeta(db);
+    currentWeek = storedMeta.currentWeek || currentWeek;
     console.log(`nfl-sync: completed (season ${season}, week ${currentWeek}, ${changed} game(s) written)`);
     return { season, currentWeek, changed, skipped: false };
   } catch (error) {

@@ -25,6 +25,8 @@
  *   POST   /leagues/:id/sync                 commissioner NFL refresh
  *   GET    /nfl/meta · /nfl/games · /nfl/team/:id
  *
+ *   GET    /nfl/external                      external news and market context
+ *
  * RTDB shape:
  *   /users/{uid}                            profile + leagues index
  *   /leagueCodes/{code}                     unique join-code → leagueId (plain string)
@@ -72,6 +74,7 @@ import {
 import { buildLeagueInsights, InsightsError } from './lib/season-service';
 import { draftEventKey, draftPickMessage, pushActivity } from './lib/activity';
 import { leagueIdFromCode } from './lib/codes';
+import { getExternalNflInsights } from './lib/external-nfl';
 
 /* ────────────────────────────── constants ────────────────────────────── */
 
@@ -1162,6 +1165,14 @@ async function getNflGames(query: QueryParams) {
   return { season, week, currentWeek: meta.currentWeek, games };
 }
 
+async function getNflExternal(query: QueryParams) {
+  const meta = await readCurrentMeta(db());
+  const season = queryNumber(query, 'season', meta.season || 2026);
+  const week = queryNumber(query, 'week', meta.currentWeek || 1);
+  const games = (await readSeasonGames(db(), season)).filter((game) => game.week === week);
+  return getExternalNflInsights(season, week, games);
+}
+
 async function getNflTeam(claims: Claims, teamId: string, query: QueryParams) {
   if (!NFL_TEAMS_BY_ID[teamId]) throw new HttpError(404, 'not-found', 'Team not found.');
 
@@ -1216,7 +1227,7 @@ async function getLeagueStandings(claims: Claims, leagueId: string, query: Query
 
   const members = membersOf(leagueValue);
   const meta = await readCurrentMeta(db());
-  const season = queryNumber(query, 'season', meta.season || 2026);
+  const season = queryNumber(query, 'season', num(leagueValue.season, meta.season || 2026));
   const games = await readSeasonGames(db(), season);
 
   // Fantasy owners come from draft selections, not from stored points.
@@ -1569,6 +1580,9 @@ function dispatch(
   }
   if (method === 'GET' && segments[0] === 'nfl' && segments[1] === 'games' && segments.length === 2) {
     return getNflGames(query);
+  }
+  if (method === 'GET' && segments[0] === 'nfl' && segments[1] === 'external' && segments.length === 2) {
+    return getNflExternal(query);
   }
   if (method === 'GET' && segments[0] === 'nfl' && segments[1] === 'team' && segments.length === 3) {
     return getNflTeam(claims, segments[2] as string, query);
