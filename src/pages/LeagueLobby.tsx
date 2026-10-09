@@ -7,8 +7,6 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Alert } from '@/components/ui/Alert';
 import { FullPageSpinner } from '@/components/ui/Spinner';
 import { CopyButton } from '@/components/ui/CopyButton';
-import { Modal } from '@/components/ui/Modal';
-import { Input } from '@/components/ui/Input';
 import { LeagueHeader } from '@/components/layout/LeagueHeader';
 import { LeagueSeason } from '@/components/league/LeagueSeason';
 import { CommissionerMenu } from '@/components/league/CommissionerMenu';
@@ -32,7 +30,6 @@ export function LeagueLobby() {
   const { room: draftRoom, status: draftStatus, error: draftError, refresh: refreshDraft } = useDraft(leagueId, 2000);
 
   const [readyBusy, setReadyBusy] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const myUid = user?.uid ?? null;
