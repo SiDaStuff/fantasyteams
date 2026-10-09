@@ -78,6 +78,8 @@ import { buildLeagueInsights, InsightsError } from './lib/season-service';
 import { draftEventKey, draftPickMessage, pushActivity } from './lib/activity';
 import { leagueIdFromCode } from './lib/codes';
 import { getExternalNflInsights } from './lib/external-nfl';
+import { touchRealtime } from './lib/realtime';
+import { readAudit, recordAudit } from './lib/audit';
 
 /* ────────────────────────────── constants ────────────────────────────── */
 
@@ -96,12 +98,32 @@ const PICK_TIMERS = new Set([30, 60, 90, 120]);
 /** Ambiguity-free alphabet (no 0/O, 1/I/L) so codes survive human errors. */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Max-Age': '86400',
-};
+function corsHeaders(origin: string | undefined): Record<string, string> {
+  const allowed = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  const selectedOrigin = origin && (allowed.length === 0 || allowed.includes(origin)) ? origin : allowed[0] ?? '';
+  return {
+    'Access-Control-Allow-Origin': selectedOrigin,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Max-Age': '86400',
+  };
+}
+
+const rateBuckets = new Map<string, { startedAt: number; count: number }>();
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT = 120;
+
+function enforceRateLimit(key: string): void {
+  const now = Date.now();
+  const bucket = rateBuckets.get(key);
+  if (!bucket || now - bucket.startedAt >= RATE_WINDOW_MS) {
+    rateBuckets.set(key, { startedAt: now, count: 1 });
+    return;
+  }
+  bucket.count += 1;
+  if (bucket.count > RATE_LIMIT) throw new HttpError(429, 'resource-exhausted', 'Too many requests. Try again shortly.');
+}
 
 /* ─────────────────────────────── errors ─────────────────────────────── */
 
@@ -361,10 +383,10 @@ function parseSegments(rawPath: string): string[] {
     });
 }
 
-function json(statusCode: number, body: unknown) {
+function json(statusCode: number, body: unknown, cors: Record<string, string>) {
   return {
     statusCode,
-    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    headers: { ...cors, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   };
 }
@@ -666,6 +688,15 @@ async function getLeagueDetail(claims: Claims, leagueId: string) {
     league: serializeLeague(leagueId, value),
     members: serializeMembers(leagueId, members),
   };
+}
+
+async function getLeagueAudit(claims: Claims, leagueId: string) {
+  const snapshot = await db().ref(`leagues/${leagueId}`).once('value');
+  if (!snapshot.exists()) throw new HttpError(404, 'not-found', 'League not found.');
+  const leagueValue = snapshot.val() as Record<string, unknown>;
+  requireMember(leagueValue, claims.uid);
+  requireCommissioner(leagueValue, claims.uid);
+  return readAudit(db(), leagueId);
 }
 
 async function getLeaguePreview(claims: Claims, code: string) {
@@ -2111,6 +2142,9 @@ function dispatch(
   if (method === 'GET' && segments[0] === 'leagues' && segments.length === 2) {
     return getLeagueDetail(claims, segments[1]);
   }
+  if (method === 'GET' && segments[0] === 'leagues' && segments[2] === 'audit' && segments.length === 3) {
+    return getLeagueAudit(claims, segments[1]);
+  }
   if (method === 'PATCH' && segments[0] === 'leagues' && segments[2] === 'ready' && segments.length === 3) {
     return setReady(claims, segments[1], body);
   }
@@ -2208,8 +2242,9 @@ function requestLog(level: 'info' | 'warn' | 'error', entry: Record<string, unkn
 }
 
 export const handler: Handler = async (event) => {
+  const headers = corsHeaders(event.headers.origin ?? event.headers.Origin);
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers: CORS_HEADERS, body: '' };
+    return { statusCode: 200, headers, body: '' };
   }
 
   const startedAt = Date.now();
@@ -2220,6 +2255,7 @@ export const handler: Handler = async (event) => {
   };
 
   try {
+    enforceRateLimit(event.headers['x-forwarded-for']?.split(',')[0]?.trim() ?? 'unknown');
     getApp(); // fail fast if the service account is missing
     const segments = parseSegments(event.path);
 
@@ -2234,16 +2270,27 @@ export const handler: Handler = async (event) => {
       event.body ?? null,
       event.queryStringParameters ?? {},
     );
+    if (claims && event.httpMethod !== 'GET') {
+      const leagueId = segments[0] === 'leagues' ? segments[1] : undefined;
+      await touchRealtime(db(), leagueId ? `league:${leagueId}` : 'global');
+      if (leagueId) {
+        await recordAudit(db(), leagueId, {
+          action: `${event.httpMethod} ${segments.slice(2).join('/') || segments[0]}`,
+          actorId: claims.uid,
+          route: event.path,
+        });
+      }
+    }
     requestLog('info', { ...baseLog, uid: claims?.uid ?? null, status: 200, durationMs: Date.now() - startedAt });
-    return json(200, result);
+    return json(200, result, headers);
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     if (error instanceof HttpError) {
       requestLog('warn', { ...baseLog, status: error.statusCode, code: error.code, message: error.message, durationMs });
-      return json(error.statusCode, { code: error.code, message: error.message });
+      return json(error.statusCode, { code: error.code, message: error.message }, headers);
     }
     requestLog('error', { ...baseLog, status: 500, code: 'internal', message: error instanceof Error ? error.message : 'Unknown error', durationMs });
     console.error(error);
-    return json(500, { code: 'internal', message: 'Unexpected server error.' });
+    return json(500, { code: 'internal', message: 'Unexpected server error.' }, headers);
   }
 };

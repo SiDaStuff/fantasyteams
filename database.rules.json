@@ -1,6 +1,15 @@
 {
   "rules": {
     ".read": false,
-    ".write": false
+    ".write": false,
+    "realtimeSignals": {
+      ".read": "auth != null",
+      ".write": false,
+      "leagues": {
+        "$leagueId": {
+          ".read": "auth != null && root.child('leagues').child($leagueId).child('members').child(auth.uid).exists()"
+        }
+      }
+    }
   }
 }

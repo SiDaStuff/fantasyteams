@@ -13,6 +13,7 @@
 
 import { getDb } from './lib/admin';
 import { reconcileDraft } from './lib/draft-service';
+import { touchRealtime } from './lib/realtime';
 
 export default async (): Promise<Response> => {
   const startedAt = Date.now();
@@ -40,6 +41,7 @@ export default async (): Promise<Response> => {
           if (completed) {
             await db.ref(`leagues/${leagueId}`).update({ status: 'active', updatedAt: Date.now() });
           }
+          await touchRealtime(db, `league:${leagueId}`);
           reconciled += 1;
         } catch (error) {
           errors += 1;

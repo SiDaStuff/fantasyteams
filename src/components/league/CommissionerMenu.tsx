@@ -10,7 +10,7 @@ import { useToast } from '@/context/ToastContext';
 import { api, apiErrorMessage } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import type { League, LeagueInsights, LeagueMember, ScoringMode } from '@/types';
+import type { AuditEntry, League, LeagueInsights, LeagueMember, ScoringMode } from '@/types';
 
 /**
  * Commissioner controls, gathered in one place. Rendered as a compact
@@ -116,6 +116,8 @@ function CommissionerModal({
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDisband, setConfirmDisband] = useState(false);
   const [disbanding, setDisbanding] = useState(false);
+  const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   const resolvedEnabled = enabled ?? insights?.prefs.projectionsEnabled ?? league?.prefs.projectionsEnabled ?? true;
   const resolvedVisible = visible ?? insights?.prefs.projectionsVisible ?? league?.prefs.projectionsVisible ?? true;
@@ -180,6 +182,18 @@ function CommissionerModal({
       toast.push('error', 'Sync failed', apiErrorMessage(err));
     } finally {
       setSyncing(false);
+    }
+
+  }
+
+  async function loadAudit() {
+    setAuditLoading(true);
+    try {
+      setAudit(await api.getLeagueAudit(leagueId));
+    } catch (err) {
+      toast.push('error', 'Could not load audit log', apiErrorMessage(err));
+    } finally {
+      setAuditLoading(false);
     }
   }
 
@@ -331,6 +345,28 @@ function CommissionerModal({
           </Button>
           {insights?.sync.lastError ? (
             <p className="mt-2 text-xs text-slate-500">The scheduled sync retries automatically every ~30 minutes.</p>
+          ) : null}
+        </div>
+
+        <div className="space-y-3 border-t border-line pt-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-display text-sm font-semibold text-white">Audit log</h3>
+              <p className="mt-1 text-xs text-slate-500">Recent league changes and administrative actions.</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => void loadAudit()} isLoading={auditLoading}>
+              {audit ? 'Refresh log' : 'Load log'}
+            </Button>
+          </div>
+          {audit ? (
+            <div className="max-h-48 space-y-2 overflow-y-auto rounded-lg border border-line bg-navy-900 p-3">
+              {audit.length === 0 ? <p className="text-xs text-slate-500">No actions recorded yet.</p> : audit.map((entry) => (
+                <div key={entry.id} className="flex items-center justify-between gap-3 text-xs">
+                  <span className="truncate text-slate-300">{entry.action}</span>
+                  <span className="shrink-0 text-slate-500">{formatRelativeTime(entry.timestamp)}</span>
+                </div>
+              ))}
+            </div>
           ) : null}
         </div>
 

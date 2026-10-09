@@ -1,12 +1,12 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, browserLocalPersistence, setPersistence, type Auth } from 'firebase/auth';
+import { getDatabase, type Database } from 'firebase/database';
 
 /**
  * Firebase initialization for the BROWSER.
  *
- * The browser only ever uses Firebase Authentication. It has NO direct access
- * to the Realtime Database or any other data layer: every read/write of
- * application data goes through the Netlify API function
+ * The browser uses Firebase Authentication and read-only realtime invalidation
+ * signals. All application data reads and writes still go through the Netlify API
  * (`netlify/functions/api.ts`), which talks to Realtime Database with the
  * Admin SDK using a service account. RTDB rules deny all direct client access.
  */
@@ -30,6 +30,7 @@ export function isFirebaseConfigured(): boolean {
 
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
+let database: Database | null = null;
 
 function ensureInitialized(): void {
   if (app) return;
@@ -41,6 +42,7 @@ function ensureInitialized(): void {
 
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
+  database = getDatabase(app);
   // Sessions persist across visits.
   void setPersistence(auth, browserLocalPersistence);
 
@@ -58,4 +60,11 @@ export function getFirebaseAuth(): Auth | null {
   if (!isFirebaseConfigured()) return null;
   ensureInitialized();
   return auth;
+}
+
+/** Returns the read-only realtime signal database, or null when unconfigured. */
+export function getFirebaseDatabase(): Database | null {
+  if (!isFirebaseConfigured()) return null;
+  ensureInitialized();
+  return database;
 }

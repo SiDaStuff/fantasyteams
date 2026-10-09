@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { onValue, ref } from 'firebase/database';
 import { api, apiErrorMessage } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
+import { getFirebaseDatabase } from '@/lib/firebase';
 import type {
   DraftRoomData,
   ExternalNflInsights,
@@ -16,12 +18,8 @@ import type {
 export type LoadStatus = 'loading' | 'ready' | 'error';
 
 /**
- * Real-time data layer.
- *
- * The browser cannot subscribe to Realtime Database directly — all data is
- * fetched through Netlify Functions. To keep the lobby and dashboard live we
- * poll the API on an interval (paused while the tab is hidden) and expose a
- * `refresh()` that re-fetches immediately after a mutation.
+ * Real-time data layer. API responses remain authoritative and sanitized;
+ * Firebase signals only tell the client when to fetch a fresh response.
  */
 
 interface PolledResult<T> {
@@ -31,9 +29,7 @@ interface PolledResult<T> {
   refresh: () => void;
 }
 
-const LISTEN_TO_VISIBILITY = true;
-
-function usePolledLoader<T>(loader: () => Promise<T>, key: string, intervalMs: number): PolledResult<T> {
+function useRealtimeLoader<T>(loader: () => Promise<T>, key: string, signalPath: string): PolledResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<LoadStatus>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -73,22 +69,21 @@ function usePolledLoader<T>(loader: () => Promise<T>, key: string, intervalMs: n
     }
 
     void load();
-
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void load();
-    }, intervalMs);
-
-    const onVisibilityChange = () => {
-      if (!document.hidden) void load();
-    };
-    if (LISTEN_TO_VISIBILITY) document.addEventListener('visibilitychange', onVisibilityChange);
+    const database = getFirebaseDatabase();
+    const unsubscribe = database
+      ? onValue(ref(database, signalPath), () => { void load(); }, (listenerError) => {
+        if (alive) {
+          setStatus('error');
+          setError(listenerError.message);
+        }
+      })
+      : () => undefined;
 
     return () => {
       alive = false;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+      unsubscribe();
     };
-  }, [key, intervalMs, nonce]);
+  }, [key, signalPath, nonce]);
 
   const refresh = useCallback(() => setNonce((current) => current + 1), []);
 
@@ -106,13 +101,14 @@ export interface LeagueResult {
 /** Polls one league (with its members). Used by the lobby. */
 export function useLeague(leagueId: string | undefined, intervalMs = 3000): LeagueResult {
   const key = leagueId ?? 'none';
-  const { data, status, error, refresh } = usePolledLoader<{ league: League; members: LeagueMember[] }>(
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader<{ league: League; members: LeagueMember[] }>(
     () => {
       if (!leagueId) return Promise.reject(new Error('No league selected.'));
       return api.getLeague(leagueId);
     },
     key,
-    intervalMs,
+    leagueId ? `realtimeSignals/leagues/${leagueId}` : 'realtimeSignals/global',
   );
 
   return {
@@ -136,10 +132,11 @@ export function useMyLeagues(intervalMs = 5000): MyLeaguesResult {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  const { data, status, error, refresh } = usePolledLoader<League[]>(
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader<League[]>(
     () => (uid ? api.getMyLeagues() : Promise.resolve([])),
     uid ?? 'anon',
-    intervalMs,
+    'realtimeSignals/global',
   );
 
   return {
@@ -164,13 +161,14 @@ export interface DraftResult {
  */
 export function useDraft(leagueId: string | undefined, intervalMs = 1000): DraftResult {
   const key = leagueId ?? 'none';
-  const { data, status, error, refresh } = usePolledLoader<DraftRoomData>(
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader<DraftRoomData>(
     () => {
       if (!leagueId) return Promise.reject(new Error('No league selected.'));
       return api.getDraft(leagueId);
     },
     key,
-    intervalMs,
+    leagueId ? `realtimeSignals/leagues/${leagueId}` : 'realtimeSignals/global',
   );
 
   return {
@@ -192,7 +190,8 @@ export interface NflMetaResult {
 
 /** Current NFL season/week pointer from the cache. */
 export function useNflMeta(intervalMs = 60000): NflMetaResult {
-  const { data, status, error, refresh } = usePolledLoader(() => api.getNflMeta(), 'nfl-meta', intervalMs);
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader(() => api.getNflMeta(), 'nfl-meta', 'realtimeSignals/global');
   return { meta: data, status, error, refresh };
 }
 
@@ -208,23 +207,26 @@ import type { NflWeekData as ApiNflWeekData } from '@/lib/api';
 /** A week of games with live scores (used by the NFL Scores page). */
 export function useNflWeek(season: number, week: number, intervalMs = 30000): NflWeekResult {
   const key = `nfl-week-${season}-${week}`;
-  const { data, status, error, refresh } = usePolledLoader(() => api.getNflWeek(season, week), key, intervalMs);
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader(() => api.getNflWeek(season, week), key, 'realtimeSignals/global');
   return { weekData: data, status, error, refresh };
 }
 
 export function useExternalNflInsights(season: number, week: number, intervalMs = 10 * 60 * 1000) {
   const key = `external-nfl-${season}-${week}`;
-  return usePolledLoader<ExternalNflInsights>(() => api.getExternalNflInsights(season, week), key, intervalMs);
+  void intervalMs;
+  return useRealtimeLoader<ExternalNflInsights>(() => api.getExternalNflInsights(season, week), key, 'realtimeSignals/global');
 }
 
 export function useTeamMarket(leagueId: string | undefined, intervalMs = 15000) {
-  return usePolledLoader<TeamMarket>(
+  void intervalMs;
+  return useRealtimeLoader<TeamMarket>(
     () => {
       if (!leagueId) throw new Error('League id is required.');
       return api.getTeamMarket(leagueId);
     },
     leagueId ? `team-market-${leagueId}` : 'team-market-none',
-    intervalMs,
+    leagueId ? `realtimeSignals/leagues/${leagueId}` : 'realtimeSignals/global',
   );
 }
 
@@ -238,13 +240,14 @@ export interface LeagueStandingsResult {
 /** League standings + weekly breakdown, recomputed server-side from results. */
 export function useLeagueStandings(leagueId: string | undefined, intervalMs = 30000): LeagueStandingsResult {
   const key = leagueId ? `standings-${leagueId}` : 'none';
-  const { data, status, error, refresh } = usePolledLoader<LeagueStandings>(
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader<LeagueStandings>(
     () => {
       if (!leagueId) return Promise.reject(new Error('No league selected.'));
       return api.getLeagueStandings(leagueId);
     },
     key,
-    intervalMs,
+    leagueId ? `realtimeSignals/leagues/${leagueId}` : 'realtimeSignals/global',
   );
   return { standings: data, status, error, refresh };
 }
@@ -259,13 +262,14 @@ export interface LeagueInsightsResult {
 /** Everything the season hub needs in one payload: standings, live, projections, activity, progress. */
 export function useLeagueInsights(leagueId: string | undefined, intervalMs = 30000): LeagueInsightsResult {
   const key = leagueId ? `insights-${leagueId}` : 'none';
-  const { data, status, error, refresh } = usePolledLoader<LeagueInsights>(
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader<LeagueInsights>(
     () => {
       if (!leagueId) return Promise.reject(new Error('No league selected.'));
       return api.getLeagueInsights(leagueId);
     },
     key,
-    intervalMs,
+    leagueId ? `realtimeSignals/leagues/${leagueId}` : 'realtimeSignals/global',
   );
   return { insights: data, status, error, refresh };
 }
@@ -284,13 +288,14 @@ export function useNflTeam(
   intervalMs = 60000,
 ): NflTeamResult {
   const key = teamId ? `nfl-team-${teamId}-${options.season ?? 0}-${options.league ?? ''}` : 'none';
-  const { data, status, error, refresh } = usePolledLoader<TeamSeasonProfile>(
+  void intervalMs;
+  const { data, status, error, refresh } = useRealtimeLoader<TeamSeasonProfile>(
     () => {
       if (!teamId) return Promise.reject(new Error('No team selected.'));
       return api.getNflTeam(teamId, options);
     },
     key,
-    intervalMs,
+    'realtimeSignals/global',
   );
   return { profile: data, status, error, refresh };
 }

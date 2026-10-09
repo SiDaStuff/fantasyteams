@@ -27,6 +27,7 @@ import type {
   SeasonProgress,
   TeamSeasonProfile,
   UserProfile,
+  AuditEntry,
 } from '@/types';
 
 /**
@@ -568,6 +569,17 @@ export const api = {
       league: mapLeague(raw.league),
       members: (raw.members ?? []).map(mapMember),
     };
+  },
+
+  async getLeagueAudit(leagueId: string): Promise<AuditEntry[]> {
+    const raw = await request<Array<Record<string, unknown>>>(`/leagues/${encodeURIComponent(leagueId)}/audit`);
+    return (raw ?? []).map((entry) => ({
+      id: String(entry.id ?? ''),
+      action: String(entry.action ?? ''),
+      actorId: String(entry.actorId ?? ''),
+      route: String(entry.route ?? ''),
+      timestamp: date(entry.timestamp),
+    }));
   },
 
   async getMyLeagues(): Promise<League[]> {

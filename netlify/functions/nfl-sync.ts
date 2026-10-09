@@ -10,11 +10,14 @@
 
 import { getDb } from './lib/admin';
 import { syncNflData } from './lib/nfl-service';
+import { touchRealtime } from './lib/realtime';
 
 export default async (): Promise<Response> => {
   const startedAt = Date.now();
   try {
-    const result = await syncNflData(getDb());
+    const db = getDb();
+    const result = await syncNflData(db);
+    if (!result.skipped && result.changed > 0) await touchRealtime(db, 'global');
     console.log(
       `nfl-sync: season ${result.season}, week ${result.currentWeek}, ` +
         `${result.skipped ? 'skipped (' + (result.message ?? '') + ')' : 'changed ' + result.changed + ' game(s)'} ` +

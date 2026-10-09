@@ -428,6 +428,14 @@ export interface TeamMarket {
   trades: LeagueTrade[];
 }
 
+export interface AuditEntry {
+  id: string;
+  action: string;
+  actorId: string;
+  route: string;
+  timestamp: Date;
+}
+
 /* ─────────────────────────────── seasonRecords ─────────────────────────── */
 
 /**
