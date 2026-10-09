@@ -7,7 +7,7 @@ export function AppLayout() {
   return (
     <div className="flex min-h-screen flex-col bg-navy-950">
       <Navbar />
-      <main className="flex-1">
+      <main id="main-content" className="flex-1" tabIndex={-1}>
         <Outlet />
       </main>
       <Footer />

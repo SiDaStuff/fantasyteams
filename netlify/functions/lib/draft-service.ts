@@ -134,6 +134,23 @@ export async function releaseDraftLock(db: Database, draftId: string): Promise<v
   await db.ref(`drafts/${draftId}/_lock`).set(null).catch(() => undefined);
 }
 
+/** A lock child alone does not mean the draft has been initialized. */
+export async function ensureDraftInitialized(db: Database, draftId: string, initialValue: DraftValue): Promise<void> {
+  const draftRef = db.ref(`drafts/${draftId}`);
+  const hasStatus = (value: DraftValue | null): boolean => typeof value?.status === 'string' && value.status !== '';
+  if (hasStatus((await draftRef.once('value')).val() as DraftValue | null)) return;
+
+  const locked = await acquireDraftLock(db, draftId, 'init');
+  if (!locked) return;
+  try {
+    // Acquiring _lock creates the parent node even when no draft exists yet.
+    if (hasStatus((await draftRef.once('value')).val() as DraftValue | null)) return;
+    await draftRef.set(initialValue);
+  } finally {
+    await releaseDraftLock(db, draftId);
+  }
+}
+
 /**
  * Expires any overdue pick: if the draft is live and the authoritative
  * deadline has passed, autopick the on-clock player and advance. Uses the lock

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Check, ChevronDown, ChevronUp, Copy, Minus, Plus, Shuffle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -30,6 +30,8 @@ export function LeagueLobby() {
   const { room: draftRoom, status: draftStatus, error: draftError, refresh: refreshDraft } = useDraft(leagueId, 2000);
 
   const [readyBusy, setReadyBusy] = useState(false);
+  const [startBusy, setStartBusy] = useState(false);
+  const startPending = useRef(false);
   const [copied, setCopied] = useState(false);
 
   const myUid = user?.uid ?? null;
@@ -135,13 +137,20 @@ export function LeagueLobby() {
   }
 
   async function handleStart() {
-    if (!leagueId || !canStart) return;
+    if (!leagueId || !canStart || startPending.current) return;
+    startPending.current = true;
+    setStartBusy(true);
     try {
       await api.startDraft(leagueId, rounds);
       toast.push('success', 'Draft is live');
       navigate(`/leagues/${leagueId}/draft`);
     } catch (err) {
       toast.push('error', 'Could not start the draft', apiErrorMessage(err));
+      refreshLeague();
+      refreshDraft();
+    } finally {
+      startPending.current = false;
+      setStartBusy(false);
     }
   }
 
@@ -378,8 +387,8 @@ export function LeagueLobby() {
               <div className="border-t border-line pt-4">
                 {isCommissioner ? (
                   <>
-                    <Button fullWidth size="lg" disabled={!canStart} onClick={() => void handleStart()}>
-                      Start draft
+                    <Button fullWidth size="lg" disabled={!canStart || startBusy} isLoading={startBusy} onClick={() => void handleStart()}>
+                      {startBusy ? 'Starting draft…' : 'Start draft'}
                     </Button>
                     {startDisabledReason ? <p className="mt-2 text-center text-xs text-slate-500">{startDisabledReason}</p> : null}
                   </>

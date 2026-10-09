@@ -13,6 +13,22 @@ export function Navbar() {
   const location = useLocation();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const accountToggleRef = useRef<HTMLButtonElement>(null);
+  const isHome = location.pathname === '/';
+
+  useEffect(() => {
+    if (!mobileOpen && !menuOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setMobileOpen(false);
+      setMenuOpen(false);
+      if (mobileOpen) mobileToggleRef.current?.focus();
+      else accountToggleRef.current?.focus();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileOpen, menuOpen]);
 
   const pathKey = location.pathname + location.search;
 
@@ -53,15 +69,16 @@ export function Navbar() {
     }`;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-navy-950">
-      <nav className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+    <header className="site-header sticky top-0 z-40 border-b border-line">
+      <a href="#main-content" className="site-skip-link focus-ring">Skip to content</a>
+      <nav className="site-container flex h-16 items-center justify-between gap-4" aria-label="Main navigation">
         <div className="flex items-center gap-6">
           <Link to="/" className="focus-ring rounded-lg" aria-label="Fantasy Teams home">
             <Logo />
           </Link>
 
           {/* Desktop nav */}
-          {signedIn ? (
+          {signedIn && !isHome ? (
             <div className="hidden items-center gap-1 md:flex">
               <NavLink to="/dashboard" className={navLinkClass}>
                 My Leagues
@@ -74,13 +91,17 @@ export function Navbar() {
         </div>
 
         <div className="hidden items-center gap-2.5 md:flex">
+          {(!signedIn || isHome) && <a href={isHome ? '#how-it-works' : '/#how-it-works'} className="focus-ring mr-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition-colors hover:text-white">How It Works</a>}
+          {signedIn && isHome && <Link to="/dashboard" className="home-button home-button-primary home-nav-button focus-ring">Dashboard</Link>}
           {signedIn ? (
             <div className="relative" ref={menuRef}>
               <button
+                ref={accountToggleRef}
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-expanded={menuOpen}
                 aria-haspopup="menu"
+                aria-label="Account menu"
                 className="focus-ring flex items-center rounded-full transition-opacity hover:opacity-85"
               >
                 <Avatar name={displayName} src={profile?.photoURL ?? user?.photoURL} size="sm" />
@@ -118,13 +139,13 @@ export function Navbar() {
           ) : (
             <>
               <Link to="/login" className="focus-ring rounded-lg px-3.5 py-2 text-sm font-semibold text-slate-200 transition-colors hover:text-white">
-                Sign in
+                Sign In
               </Link>
               <Link
                 to="/register"
-                className="focus-ring inline-flex h-9 items-center rounded-lg bg-electric-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-electric-400"
+                className="home-button home-button-primary home-nav-button focus-ring"
               >
-                Sign up
+                Get Started
               </Link>
             </>
           )}
@@ -132,11 +153,13 @@ export function Navbar() {
 
         {/* Mobile toggle */}
         <button
+          ref={mobileToggleRef}
           type="button"
           onClick={() => setMobileOpen((v) => !v)}
           className="focus-ring -mr-2 rounded-lg p-2 text-slate-200 md:hidden"
           aria-expanded={mobileOpen}
           aria-label="Menu"
+          aria-controls="mobile-navigation"
         >
           {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
         </button>
@@ -144,8 +167,9 @@ export function Navbar() {
 
       {/* Mobile menu */}
       {mobileOpen ? (
-        <div className="animate-fade-in border-t border-line bg-navy-950 px-4 py-3 md:hidden">
+        <div id="mobile-navigation" className="animate-fade-in border-t border-line bg-navy-950 px-4 py-3 md:hidden">
           <div className="flex flex-col gap-0.5">
+            {(!signedIn || isHome) && <a href={isHome ? '#how-it-works' : '/#how-it-works'} onClick={() => setMobileOpen(false)} className="focus-ring rounded-lg px-3 py-2.5 text-sm font-medium text-slate-200 hover:bg-white/5">How It Works</a>}
             {signedIn ? (
               <>
                 <div className="mb-2 flex items-center gap-3 px-2 py-2">
@@ -155,8 +179,8 @@ export function Navbar() {
                     <p className="truncate text-xs text-slate-500">{user?.email ?? ''}</p>
                   </div>
                 </div>
-                <MobileLink to="/dashboard">My Leagues</MobileLink>
-                <MobileLink to="/nfl">NFL Scores</MobileLink>
+                <MobileLink to="/dashboard">{isHome ? 'Dashboard' : 'My Leagues'}</MobileLink>
+                {!isHome && <MobileLink to="/nfl">NFL Scores</MobileLink>}
                 <MobileLink to="/leagues/new">Create a league</MobileLink>
                 <button
                   type="button"
@@ -170,8 +194,8 @@ export function Navbar() {
               </>
             ) : (
               <>
-                <MobileLink to="/login">Sign in</MobileLink>
-                <MobileLink to="/register">Sign up</MobileLink>
+                <MobileLink to="/login">Sign In</MobileLink>
+                <Link to="/register" className="home-button home-button-primary focus-ring mt-2">Get Started</Link>
               </>
             )}
           </div>

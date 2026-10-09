@@ -43,6 +43,7 @@ import {
   acquireDraftLock,
   applyDraftPick,
   autopick,
+  ensureDraftInitialized,
   reconcileDraft,
   releaseDraftLock,
   serializeDraft,
@@ -762,33 +763,21 @@ function memberValue(members: MemberRecord, uid: string): Record<string, unknown
 
 /** Idempotent: creates the league's draft node on first access. */
 async function ensureDraftNode(leagueId: string, leagueValue: Record<string, unknown>): Promise<void> {
-  const draftRef = db().ref(`drafts/${leagueId}`);
-  const exists = (await draftRef.once('value')).exists();
-  if (exists) return;
-
-  const locked = await acquireDraftLock(db(), leagueId, 'init');
-  if (!locked) return; // another instance is creating it
-
-  try {
-    if ((await draftRef.once('value')).exists()) return; // double-check under the lock
-    const ids = typeSafeMemberIds(membersOf(leagueValue));
-    const rounds = maxRoundsFor(ids.length);
-    await draftRef.set({
-      status: 'upcoming',
-      format: leagueValue.draftFormat === 'linear' ? 'linear' : 'snake',
-      rounds,
-      order: ids,
-      currentPick: 0,
-      totalPicks: totalPicksFor(ids.length, rounds),
-      pickDeadline: null,
-      pauseRemainingMs: null,
-      pausedAt: null,
-      startedAt: null,
-      completedAt: null,
-    });
-  } finally {
-    await releaseDraftLock(db(), leagueId);
-  }
+  const ids = typeSafeMemberIds(membersOf(leagueValue));
+  const rounds = maxRoundsFor(ids.length);
+  await ensureDraftInitialized(db(), leagueId, {
+    status: 'upcoming',
+    format: leagueValue.draftFormat === 'linear' ? 'linear' : 'snake',
+    rounds,
+    order: ids,
+    currentPick: 0,
+    totalPicks: totalPicksFor(ids.length, rounds),
+    pickDeadline: null,
+    pauseRemainingMs: null,
+    pausedAt: null,
+    startedAt: null,
+    completedAt: null,
+  });
 }
 
 function membersById(members: MemberRecord): Record<string, { displayName: string }> {
