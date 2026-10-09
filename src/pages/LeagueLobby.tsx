@@ -408,6 +408,8 @@ export function LeagueLobby() {
             insights={null}
             members={members}
             currentUserId={myUid}
+            canEditLeague
+            league={league}
             onSynced={() => {
               refreshDraft();
               refreshLeague();
@@ -418,9 +420,6 @@ export function LeagueLobby() {
           />
         </div>
       ) : null}
-
-      {/* Edit settings modal (name + size only; draft settings live above) */}
-      {isCommissioner ? <EditSettingsModal leagueId={league.id} open={settingsOpen} onClose={() => setSettingsOpen(false)} /> : null}
     </div>
   );
 }
@@ -439,89 +438,5 @@ function MemberRow({ member, isYou }: { member: LeagueMember; isYou: boolean }) 
         {member.isReady ? 'Ready' : 'Not ready'}
       </span>
     </div>
-  );
-}
-
-function EditSettingsModal({ leagueId, open, onClose }: { leagueId: string; open: boolean; onClose: () => void }) {
-  const { league, refresh } = useLeague(leagueId, 3000);
-  const toast = useToast();
-
-  const [name, setName] = useState('');
-  const [maxParticipants, setMaxParticipants] = useState(8);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [previousOpen, setPreviousOpen] = useState(open);
-  if (previousOpen !== open) {
-    setPreviousOpen(open);
-    if (open && league) {
-      setName(league.name);
-      setMaxParticipants(league.maxParticipants);
-      setError(null);
-    }
-  }
-
-  async function handleSave() {
-    if (!league || saving) return;
-    if (name.trim().length < 3 || name.trim().length > 60) {
-      setError('League name must be 3–60 characters.');
-      return;
-    }
-    if (maxParticipants < 2 || maxParticipants > 16 || maxParticipants < league.memberCount) {
-      setError(`League size must stay between 2 and 16 (and at least ${league.memberCount}).`);
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await api.updateLeagueSettings(leagueId, { name: name.trim(), maxParticipants });
-      toast.push('success', 'Settings saved');
-      onClose();
-      void refresh();
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="League settings"
-      description="Only the commissioner can change these."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={() => void handleSave()} isLoading={saving}>
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-5">
-        {error ? <Alert variant="error">{error}</Alert> : null}
-        <Input label="League name" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} />
-        <div>
-          <label htmlFor="maxParticipants" className="mb-1.5 flex items-center justify-between text-sm font-medium text-slate-200">
-            Max players
-            <span className="text-xs text-slate-500">{maxParticipants}</span>
-          </label>
-          <input
-            id="maxParticipants"
-            type="range"
-            min={Math.max(2, league?.memberCount ?? 2)}
-            max={16}
-            step={1}
-            value={maxParticipants}
-            onChange={(event) => setMaxParticipants(Number(event.target.value))}
-            className="h-11 w-full accent-electric-500"
-          />
-        </div>
-      </div>
-    </Modal>
   );
 }

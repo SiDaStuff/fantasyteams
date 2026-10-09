@@ -7,13 +7,12 @@ import type { ReactNode } from 'react';
  * back link, league name, and a right-side action slot.
  */
 export function LeagueHeader({
-  leagueId,
   leagueName,
   season,
   right,
   children,
 }: {
-  leagueId: string;
+  leagueId?: string;
   leagueName: string;
   season: number;
   right?: ReactNode;

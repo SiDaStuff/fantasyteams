@@ -13,21 +13,19 @@
 
 # ── Browser: Firebase Auth web-app config (Firebase Console → Project
 # ── settings → Your apps → Web app). Authentication only.
-VITE_FIREBASE_API_KEY=AIzaSyBchvb6GSC52g_j7DRFEIC5YqWST90s9EQ
-VITE_FIREBASE_AUTH_DOMAIN=fantasyteams-4473b.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=fantasyteams-4473b
-VITE_FIREBASE_STORAGE_BUCKET=fantasyteams-4473b.firebasestorage.app
-VITE_FIREBASE_MESSAGING_SENDER_ID=718922917481
-VITE_FIREBASE_APP_ID=1:718922917481:web:0fd716609577774358e4f8
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
 
 # ── Server: Firebase Admin SDK credentials (Netlify Functions only).
 # ── Service account JSON (Project settings → Service accounts → Generate key).
 # ── Single-line escaped JSON, or paste the raw block with quotes preserved.
 FIREBASE_SERVICE_ACCOUNT=
-# Realtime Database URL. If omitted it is derived from the service account's
 # project_id as https://<project_id>-default-rtdb.firebaseio.com
-FIREBASE_DATABASE_URL=https://fantasyteams-4473b-default-rtdb.firebaseio.com/
-
+FIREBASE_DATABASE_URL=
 # ── Optional: override the API base path (default: same-origin /.netlify/functions/api)
 # VITE_API_BASE=
 

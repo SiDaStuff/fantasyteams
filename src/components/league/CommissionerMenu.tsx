@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Crown, RefreshCw, Settings } from 'lucide-react';
+import { Alert } from '@/components/ui/Alert';
+import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { LeaderCommands } from '@/components/league/LeaderCommands';
@@ -7,7 +9,7 @@ import { useToast } from '@/context/ToastContext';
 import { api, apiErrorMessage } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import type { LeagueInsights, LeagueMember, ScoringMode } from '@/types';
+import type { League, LeagueInsights, LeagueMember, ScoringMode } from '@/types';
 
 /**
  * Commissioner controls, gathered in one place. Rendered as a compact
@@ -23,6 +25,7 @@ export function CommissionerMenu({
   setSyncing,
   onSync,
   canEditLeague = false,
+  league,
 }: {
   leagueId: string;
   insights: LeagueInsights | null;
@@ -34,6 +37,8 @@ export function CommissionerMenu({
   onSync: () => void | Promise<void>;
   /** League name/size editing (pre-draft only). */
   canEditLeague?: boolean;
+  /** League object, required when canEditLeague is true. */
+  league?: League;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -65,6 +70,7 @@ export function CommissionerMenu({
         syncing={syncing}
         setSyncing={setSyncing}
         canEditLeague={canEditLeague}
+        league={league}
       />
     </>
   );
@@ -81,6 +87,7 @@ function CommissionerModal({
   syncing,
   setSyncing,
   canEditLeague,
+  league,
 }: {
   open: boolean;
   onClose: () => void;
@@ -92,6 +99,7 @@ function CommissionerModal({
   syncing: boolean;
   setSyncing: (value: boolean) => void;
   canEditLeague: boolean;
+  league?: League;
 }) {
   const toast = useToast();
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -213,6 +221,90 @@ function CommissionerModal({
           <Crown className="h-3.5 w-3.5 text-gold-400" />
           Commissioner only
         </p>
+      </div>
+
+      {canEditLeague && league ? <EditLeagueModal league={league} open={editOpen} onClose={() => setEditOpen(false)} onSaved={onSynced} /> : null}
+    </Modal>
+  );
+}
+
+/** League name + max size. */
+function EditLeagueModal({ league, open, onClose, onSaved }: { league: League; open: boolean; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState(league.name);
+  const [maxParticipants, setMaxParticipants] = useState(league.maxParticipants);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previousOpen, setPreviousOpen] = useState(open);
+
+  if (previousOpen !== open) {
+    setPreviousOpen(open);
+    if (open) {
+      setName(league.name);
+      setMaxParticipants(league.maxParticipants);
+      setError(null);
+    }
+  }
+
+  async function handleSave() {
+    if (saving) return;
+    if (name.trim().length < 3 || name.trim().length > 60) {
+      setError('League name must be 3–60 characters.');
+      return;
+    }
+    if (maxParticipants < 2 || maxParticipants > 16 || maxParticipants < league.memberCount) {
+      setError(`League size must stay between 2 and 16 (and at least ${league.memberCount}).`);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateLeagueSettings(league.id, { name: name.trim(), maxParticipants });
+      toast.push('success', 'Settings saved');
+      onClose();
+      onSaved();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Edit league"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={() => void handleSave()} isLoading={saving}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        {error ? <Alert variant="error">{error}</Alert> : null}
+        <Input label="League name" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} />
+        <div>
+          <label htmlFor="maxParticipants" className="mb-1.5 flex items-center justify-between text-sm font-medium text-slate-200">
+            Max players
+            <span className="text-xs text-slate-500">{maxParticipants}</span>
+          </label>
+          <input
+            id="maxParticipants"
+            type="range"
+            min={2}
+            max={16}
+            step={1}
+            value={maxParticipants}
+            onChange={(event) => setMaxParticipants(Number(event.target.value))}
+            className="h-11 w-full accent-electric-500"
+          />
+        </div>
       </div>
     </Modal>
   );

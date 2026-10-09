@@ -219,7 +219,6 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
           ) : (
             <div className="mt-3 divide-y divide-line/60 border-y border-line/60">
               {myGamesThisWeek.map((game) => {
-                const mineHome = myTeamIds.has(game.homeTeamId);
                 const mineAway = myTeamIds.has(game.awayTeamId);
                 return (
                   <div key={game.id} className="flex items-center justify-between gap-3 py-3 text-sm">

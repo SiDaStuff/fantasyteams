@@ -5,14 +5,12 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Alert } from '@/components/ui/Alert';
 import { FirebaseSetupNotice } from '@/components/layout/FirebaseSetupNotice';
-import { useAuth } from '@/context/AuthContext';
 import { useMyLeagues } from '@/hooks/useLeagues';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { pluralize } from '@/lib/format';
 import type { League } from '@/types';
 
 export function Dashboard() {
-  const { user } = useAuth();
   const { leagues, status: leaguesStatus, error } = useMyLeagues();
 
   const rankedLeagues = useMemo(
