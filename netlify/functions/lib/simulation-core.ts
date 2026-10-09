@@ -15,7 +15,7 @@
  * suite stable and lets the server cache projections by a games-version key.
  */
 import type { NflGame, ScoringMode, TeamRecord } from '../../../src/types';
-import { computeTeamRecords, teamScoreFor } from './scoring-core';
+import { computeTeamRecords, isTeamBenched, teamScoreFor } from './scoring-core';
 import type { StandingOwner } from './scoring-core';
 
 /* ─────────────────────────── seeded randomness ─────────────────────────── */
@@ -186,7 +186,7 @@ export function projectSeason(
   for (const owner of owners) {
     let score = 0;
     for (const teamId of owner.teamIds) {
-      score += teamScoreFor(games, teamId, mode);
+      score += teamScoreFor(games.filter((game) => !isTeamBenched(owner, teamId, game.week)), teamId, mode);
     }
     confirmed.set(owner.userId, score);
   }
@@ -225,6 +225,7 @@ export function projectSeason(
         for (const owner of owners) {
           let added = 0;
           for (const teamId of owner.teamIds) {
+            if (isTeamBenched(owner, teamId, game.week)) continue;
             if (game.homeTeamId === teamId) added += homePts;
             else if (game.awayTeamId === teamId) added += awayPts;
           }
@@ -237,7 +238,9 @@ export function projectSeason(
       const winner = outcome === 'home' ? game.homeTeamId : outcome === 'away' ? game.awayTeamId : null;
       if (!winner) continue;
       for (const owner of owners) {
-        if (owner.teamIds.includes(winner)) wins.set(owner.userId, (wins.get(owner.userId) ?? 0) + 1);
+        if (owner.teamIds.includes(winner) && !isTeamBenched(owner, winner, game.week)) {
+          wins.set(owner.userId, (wins.get(owner.userId) ?? 0) + 1);
+        }
       }
     }
 

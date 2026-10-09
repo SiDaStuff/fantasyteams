@@ -155,6 +155,25 @@ export interface StandingOwner {
   displayName: string;
   photoURL: string | null;
   teamIds: string[];
+  /** Week-keyed lineup snapshots. A snapshot carries forward until replaced. */
+  benchedTeamIdsByWeek?: Record<string, string[]>;
+}
+
+export function isTeamBenched(owner: StandingOwner, teamId: string, week: number): boolean {
+  const snapshots = owner.benchedTeamIdsByWeek ?? {};
+  const snapshotWeek = Object.keys(snapshots)
+    .map(Number)
+    .filter((value) => Number.isInteger(value) && value <= week)
+    .sort((a, b) => b - a)[0];
+  return snapshotWeek !== undefined && (snapshots[String(snapshotWeek)] ?? []).includes(teamId);
+}
+
+function scoringGamesForTeam(games: readonly NflGame[], owner: StandingOwner, teamId: string): NflGame[] {
+  return games.filter(
+    (game) =>
+      (game.homeTeamId === teamId || game.awayTeamId === teamId) &&
+      !isTeamBenched(owner, teamId, game.week),
+  );
 }
 
 export interface StandingsResult {
@@ -194,14 +213,14 @@ export function computeStandings(
   games: readonly NflGame[],
   mode: ScoringMode = 'wins',
 ): StandingsResult {
-  const records = computeTeamRecords(games);
   const weeks = Array.from(new Set(games.map((game) => game.week))).sort((a, b) => a - b);
   const weeklyWins: Record<string, Record<string, number>> = {};
 
   const rows = owners.map((owner) => {
     const teams: StandingTeam[] = owner.teamIds
       .map((teamId) => {
-        const record = records.get(teamId);
+        const scoringGames = scoringGamesForTeam(games, owner, teamId);
+        const record = computeTeamRecords(scoringGames).get(teamId);
         return {
           teamId,
           name: '',
@@ -209,20 +228,22 @@ export function computeStandings(
           wins: record?.wins ?? 0,
           losses: record?.losses ?? 0,
           ties: record?.ties ?? 0,
-          points: mode === 'points' ? teamPointsFor(games, teamId) : record?.wins ?? 0,
+          points: mode === 'points' ? teamPointsFor(scoringGames, teamId) : record?.wins ?? 0,
         };
       })
       .sort((a, b) => b.points - a.points || a.teamId.localeCompare(b.teamId));
 
     const totalWins = owner.teamIds.reduce((sum, teamId) => {
-      const record = records.get(teamId);
-      return sum + (mode === 'points' ? teamPointsFor(games, teamId) : record?.wins ?? 0);
+      const scoringGames = scoringGamesForTeam(games, owner, teamId);
+      const record = computeTeamRecords(scoringGames).get(teamId);
+      return sum + (mode === 'points' ? teamPointsFor(scoringGames, teamId) : record?.wins ?? 0);
     }, 0);
 
     // Per-week breakdown for this owner's franchises.
     for (const week of weeks) {
       let score = 0;
       for (const teamId of owner.teamIds) {
+        if (isTeamBenched(owner, teamId, week)) continue;
         if (mode === 'points') {
           for (const game of games) {
             if (game.week === week && game.final && !game.postponed) {
@@ -333,6 +354,7 @@ export function computeLiveStandings(
         for (const owner of owners) {
           let added = 0;
           for (const teamId of owner.teamIds) {
+            if (isTeamBenched(owner, teamId, game.week)) continue;
             if (game.homeTeamId === teamId) added += game.homeScore ?? 0;
             else if (game.awayTeamId === teamId) added += game.awayScore ?? 0;
           }
@@ -347,7 +369,7 @@ export function computeLiveStandings(
           : null;
       if (winner) {
         for (const owner of owners) {
-          if (owner.teamIds.includes(winner)) {
+          if (owner.teamIds.includes(winner) && !isTeamBenched(owner, winner, game.week)) {
             confirmed.set(owner.userId, (confirmed.get(owner.userId) ?? 0) + 1);
           }
         }
@@ -363,6 +385,7 @@ export function computeLiveStandings(
       for (const owner of owners) {
         let added = 0;
         for (const teamId of owner.teamIds) {
+          if (isTeamBenched(owner, teamId, game.week)) continue;
           if (game.homeTeamId === teamId) added += game.homeScore ?? 0;
           else if (game.awayTeamId === teamId) added += game.awayScore ?? 0;
         }
@@ -373,11 +396,10 @@ export function computeLiveStandings(
 
     if (game.homeScore === null || game.awayScore === null || game.homeScore === game.awayScore) continue;
     const leader = game.homeScore > game.awayScore ? game.homeTeamId : game.awayTeamId;
-    const owner = owners.find((entry) => entry.teamIds.includes(leader));
+    const owner = owners.find((entry) => entry.teamIds.includes(leader) && !isTeamBenched(entry, leader, game.week));
     if (owner) potential.set(owner.userId, (potential.get(owner.userId) ?? 0) + 1);
   }
 
-  const records = computeTeamRecords(games);
   const rows = owners
     .map((owner) => {
       const confirmedWins = confirmed.get(owner.userId) ?? 0;
@@ -391,7 +413,8 @@ export function computeLiveStandings(
         liveTotal: confirmedWins + potentialWins,
         winsBehind: 0,
         teams: owner.teamIds.map((teamId) => {
-          const record = records.get(teamId);
+          const scoringGames = scoringGamesForTeam(games, owner, teamId);
+          const record = computeTeamRecords(scoringGames).get(teamId);
           return {
             teamId,
             name: '',
@@ -399,7 +422,7 @@ export function computeLiveStandings(
             wins: record?.wins ?? 0,
             losses: record?.losses ?? 0,
             ties: record?.ties ?? 0,
-            points: mode === 'points' ? teamPointsFor(games, teamId) : record?.wins ?? 0,
+            points: mode === 'points' ? teamPointsFor(scoringGames, teamId) : record?.wins ?? 0,
           };
         }),
         rank: 1,

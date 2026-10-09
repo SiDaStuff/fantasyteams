@@ -123,6 +123,9 @@ function ownersForLeague(
   seasonKey: string,
 ): StandingOwner[] {
   const members = membersOf(leagueValue);
+  const lineups = (leagueValue.lineups && typeof leagueValue.lineups === 'object'
+    ? leagueValue.lineups
+    : {}) as Record<string, Record<string, Record<string, unknown>>>;
   const teamIdsByUser = new Map<string, string[]>();
   if (picks) {
     for (const pick of Object.values(picks)) {
@@ -142,6 +145,12 @@ function ownersForLeague(
       displayName: str(member.displayName, 'Player'),
       photoURL: typeof member.photoURL === 'string' ? member.photoURL : null,
       teamIds: teamIdsByUser.get(userId) ?? [],
+      benchedTeamIdsByWeek: Object.fromEntries(
+        Object.entries(lineups[userId] ?? {}).map(([week, teams]) => [
+          week,
+          Object.entries(teams ?? {}).filter(([teamId, benched]) => teamId !== '_empty' && benched === true).map(([teamId]) => teamId),
+        ]),
+      ),
     };
   });
 }
@@ -179,7 +188,8 @@ async function ensureProjectionCached(
   seedSalt: string,
   mode: ScoringMode = 'wins',
 ): Promise<CachedProjection> {
-  const version = computeGamesVersion(games);
+  const lineupVersion = JSON.stringify(owners.map((owner) => [owner.userId, owner.benchedTeamIdsByWeek ?? {}]));
+  const version = `${computeGamesVersion(games)}-${lineupVersion}`;
   const ref = db.ref(`nfl/seasons/${season}/projections/${leagueId}/${mode}`);
   let existing: CachedProjection | null = null;
   try {
@@ -211,7 +221,8 @@ export interface LeagueInsightsPayload {
   season: number;
   currentWeek: number;
   totalWeeks: number;
-  prefs: { projectionsEnabled: boolean; projectionsVisible: boolean; scoringMode: ScoringMode };
+  prefs: { projectionsEnabled: boolean; projectionsVisible: boolean; scoringMode: ScoringMode; benchEnabled: boolean; benchSlots: number; benchLocksAtKickoff: boolean };
+  lineup: { week: number; benchedTeamIds: string[] };
   sync: { lastSyncAt: number | null; lastError: string | null };
   announcement: { text: string; by: string; at: number } | null;
   progress: ReturnType<typeof computeSeasonProgress>;
@@ -258,6 +269,9 @@ export async function buildLeagueInsights(
     projectionsEnabled: bool(prefsValue.projectionsEnabled, true),
     projectionsVisible: bool(prefsValue.projectionsVisible, true),
     scoringMode,
+    benchEnabled: bool(prefsValue.benchEnabled, false),
+    benchSlots: Math.max(0, Math.min(16, num(prefsValue.benchSlots, 1))),
+    benchLocksAtKickoff: bool(prefsValue.benchLocksAtKickoff, true),
   };
 
   // Official standings + weekly breakdown, in the league's scoring mode.
@@ -291,6 +305,10 @@ export async function buildLeagueInsights(
   }
 
   const progress = computeSeasonProgress(games, currentWeek);
+  const currentOwner = owners.find((owner) => owner.userId === uid);
+  const currentBench = currentOwner?.benchedTeamIdsByWeek ?? {};
+  const currentSnapshotWeek = Object.keys(currentBench).map(Number).filter((week) => week <= currentWeek).sort((a, b) => b - a)[0];
+  const benchedTeamIds = currentSnapshotWeek === undefined ? [] : currentBench[String(currentSnapshotWeek)] ?? [];
 
   // Leader + closest competitors from the official standings.
   const leaderRow = standings[0];
@@ -324,6 +342,7 @@ export async function buildLeagueInsights(
     currentWeek,
     totalWeeks: progress.totalWeeks,
     prefs,
+    lineup: { week: currentWeek, benchedTeamIds },
     sync: { lastSyncAt: num(seasonMeta.lastSyncAt, meta.lastSyncAt) || null, lastError: typeof lastError === 'string' ? lastError : null },
     announcement,
     progress,

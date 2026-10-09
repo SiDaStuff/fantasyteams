@@ -107,6 +107,36 @@ describe('weekly wins', () => {
     const result = computeStandings(owners([['a', ['kc', 'buf']]]), games);
     expect(result.standings[0]?.totalWins).toBe(1);
   });
+
+  it('applies weekly bench snapshots without removing earlier scores', () => {
+    const games = [
+      game({ week: 1, homeTeamId: 'kc', awayTeamId: 'buf', homeScore: 30, awayScore: 10 }),
+      game({ week: 2, homeTeamId: 'kc', awayTeamId: 'buf', homeScore: 24, awayScore: 17 }),
+      game({ week: 3, homeTeamId: 'kc', awayTeamId: 'buf', homeScore: 27, awayScore: 20 }),
+    ];
+    const owner: StandingOwner = {
+      userId: 'a', displayName: 'Owner', photoURL: null, teamIds: ['kc'],
+      benchedTeamIdsByWeek: { '2': ['kc'] },
+    };
+    const result = computeStandings([owner], games);
+    expect(result.standings[0]?.totalWins).toBe(1);
+    expect(result.weeklyWins['1']?.a).toBe(1);
+    expect(result.weeklyWins['2']?.a).toBeUndefined();
+    expect(result.weeklyWins['3']?.a).toBeUndefined();
+  });
+
+  it('reactivates a team from a later empty bench snapshot', () => {
+    const games = [
+      game({ week: 1, homeTeamId: 'kc', awayTeamId: 'buf', homeScore: 30, awayScore: 10 }),
+      game({ week: 2, homeTeamId: 'kc', awayTeamId: 'buf', homeScore: 24, awayScore: 17 }),
+      game({ week: 3, homeTeamId: 'kc', awayTeamId: 'buf', homeScore: 27, awayScore: 20 }),
+    ];
+    const owner: StandingOwner = {
+      userId: 'a', displayName: 'Owner', photoURL: null, teamIds: ['kc'],
+      benchedTeamIdsByWeek: { '2': ['kc'], '3': [] },
+    };
+    expect(computeStandings([owner], games).standings[0]?.totalWins).toBe(2);
+  });
 });
 
 describe('standings', () => {

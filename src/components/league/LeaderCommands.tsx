@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Crown, Megaphone, RefreshCw, Trash2, UserMinus } from 'lucide-react';
+import { Ban, Crown, Megaphone, RefreshCw, Trash2, UserMinus } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { api, apiErrorMessage } from '@/lib/api';
@@ -21,6 +21,7 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
   const [text, setText] = useState(announcement?.text ?? '');
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [confirmBan, setConfirmBan] = useState<string | null>(null);
   const [targetId, setTargetId] = useState<string>('');
 
   // Sync the draft box when the stored announcement changes.
@@ -83,6 +84,21 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
       onChanged();
     } catch (error) {
       toast.push('error', 'Could not remove member', apiErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function ban(userId: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.banLeagueMember(leagueId, userId);
+      toast.push('success', 'Player banned');
+      setConfirmBan(null);
+      onChanged();
+    } catch (error) {
+      toast.push('error', 'Could not ban player', apiErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -156,12 +172,12 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
         </div>
       </div>
 
-      {/* Remove member (pre-draft) */}
+      {/* Remove or ban member */}
       {canRemove ? (
         <div>
           <p className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-white">
             <UserMinus className="h-4 w-4 text-rose-400" />
-            Remove player
+            Player access
           </p>
           <div className="space-y-1.5">
             {safeMembers.length === 0 ? (
@@ -182,9 +198,24 @@ export function LeaderCommands({ leagueId, members, currentUserId, announcement,
                       </Button>
                     </>
                   ) : (
-                    <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(member.userId)} disabled={busy} leftIcon={<Trash2 className="h-3.5 w-3.5" />}>
-                      Remove
-                    </Button>
+                    <>
+                      {confirmBan === member.userId ? (
+                        <>
+                          <span className="text-xs font-semibold text-rose-300">Ban?</span>
+                          <Button size="sm" variant="danger" onClick={() => void ban(member.userId)} isLoading={busy}>Yes</Button>
+                          <Button size="sm" variant="ghost" onClick={() => setConfirmBan(null)} disabled={busy}>No</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => { setConfirmBan(null); setConfirmRemove(member.userId); }} disabled={busy} leftIcon={<Trash2 className="h-3.5 w-3.5" />}>
+                            Kick
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => { setConfirmRemove(null); setConfirmBan(member.userId); }} disabled={busy} leftIcon={<Ban className="h-3.5 w-3.5" />}>
+                            Ban
+                          </Button>
+                        </>
+                      )}
+                    </>
                   )}
                 </div>
               ))

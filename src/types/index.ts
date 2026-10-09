@@ -46,6 +46,7 @@ export interface UserProfile {
   authProvider: string;
   createdAt: Date;
   updatedAt: Date;
+  prefs: LeaguePrefs;
 }
 
 /* ─────────────────────────────── leagues ───────────────────────────────── */
@@ -318,6 +319,9 @@ export interface LeaguePrefs {
   projectionsEnabled: boolean;
   projectionsVisible: boolean;
   scoringMode: ScoringMode;
+  benchEnabled: boolean;
+  benchSlots: number;
+  benchLocksAtKickoff: boolean;
 }
 
 export interface ProjectionOwnerRow {
@@ -383,6 +387,7 @@ export interface LeagueInsights {
   currentWeek: number;
   totalWeeks: number;
   prefs: LeaguePrefs;
+  lineup: { week: number; benchedTeamIds: string[] };
   sync: { lastSyncAt: Date | null; lastError: string | null };
   announcement: { text: string; by: string; at: Date } | null;
   progress: SeasonProgress;

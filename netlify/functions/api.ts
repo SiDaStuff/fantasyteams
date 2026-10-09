@@ -38,7 +38,7 @@
 import { randomInt } from 'node:crypto';
 import admin from 'firebase-admin';
 import type { Handler } from '@netlify/functions';
-import type { DraftFormat, DraftPickTimer, LeagueStatus, NflGame } from '../../src/types';
+import type { DraftFormat, DraftPickTimer, LeagueStatus, NflGame, ScoringMode } from '../../src/types';
 import { NFL_TEAMS_BY_ID } from '../../src/data/nflTeams';
 import { getAdminApp, getDb, ServerConfigError } from './lib/admin';
 import {
@@ -248,6 +248,7 @@ interface LeagueDTO {
   memberCount: number;
   createdAt: number;
   updatedAt: number;
+  prefs: { projectionsEnabled: boolean; projectionsVisible: boolean; scoringMode: ScoringMode; benchEnabled: boolean; benchSlots: number; benchLocksAtKickoff: boolean };
 }
 
 interface MemberDTO {
@@ -262,6 +263,7 @@ interface MemberDTO {
 }
 
 function serializeLeague(leagueId: string, value: Record<string, unknown>): LeagueDTO {
+  const prefs = (value.prefs ?? {}) as Record<string, unknown>;
   return {
     id: leagueId,
     name: str(value.name, 'Untitled League'),
@@ -275,6 +277,14 @@ function serializeLeague(leagueId: string, value: Record<string, unknown>): Leag
     memberCount: num(value.memberCount, 0),
     createdAt: num(value.createdAt, 0),
     updatedAt: num(value.updatedAt, 0),
+    prefs: {
+      projectionsEnabled: prefs.projectionsEnabled !== false,
+      projectionsVisible: prefs.projectionsVisible !== false,
+      scoringMode: prefs.scoringMode === 'points' ? 'points' : 'wins',
+      benchEnabled: prefs.benchEnabled === true,
+      benchSlots: Math.max(0, Math.min(16, num(prefs.benchSlots, 1))),
+      benchLocksAtKickoff: prefs.benchLocksAtKickoff !== false,
+    },
   };
 }
 
@@ -396,6 +406,14 @@ async function getOrCreateProfile(claims: Claims) {
     authProvider: claims.provider ?? 'unknown',
     createdAt: now,
     updatedAt: now,
+    prefs: {
+      projectionsEnabled: true,
+      projectionsVisible: true,
+      scoringMode: 'wins',
+      benchEnabled: false,
+      benchSlots: 1,
+      benchLocksAtKickoff: true,
+    },
   });
 
   return {
@@ -554,6 +572,12 @@ async function joinLeague(claims: Claims, body: unknown) {
     if (members[claims.uid]) {
       requestLog('warn', { method: 'POST', path: `/leagues/${leagueId}/join`, fn: 'join', code: 'already-exists', reason: 'already-member', leagueId, uid: claims.uid });
       throw new HttpError(409, 'already-exists', 'You are already a member of this league.');
+    }
+    const bannedUsers = value.bannedUsers && typeof value.bannedUsers === 'object'
+      ? value.bannedUsers as Record<string, unknown>
+      : {};
+    if (bannedUsers[claims.uid]) {
+      throw new HttpError(403, 'forbidden', 'You have been banned from this league.');
     }
     if (value.status !== 'waiting') {
       requestLog('warn', { method: 'POST', path: `/leagues/${leagueId}/join`, fn: 'join', code: 'failed-precondition', reason: 'not-waiting', leagueId, uid: claims.uid, status: str(value.status) });
@@ -1255,11 +1279,18 @@ async function getLeagueStandings(claims: Claims, leagueId: string, query: Query
 
   const owners: StandingOwner[] = Object.keys(members).map((uid) => {
     const member = memberValue(members, uid);
+    const lineups = (leagueValue.lineups && typeof leagueValue.lineups === 'object'
+      ? leagueValue.lineups
+      : {}) as Record<string, Record<string, Record<string, unknown>>>;
     return {
       userId: uid,
       displayName: str(member.displayName, 'Player'),
       photoURL: typeof member.photoURL === 'string' ? member.photoURL : null,
       teamIds: Array.from(teamIdsByUser.get(uid) ?? []),
+      benchedTeamIdsByWeek: Object.fromEntries(Object.entries(lineups[uid] ?? {}).map(([week, teams]) => [
+        week,
+        Object.entries(teams ?? {}).filter(([teamId, value]) => teamId !== '_empty' && value === true).map(([teamId]) => teamId),
+      ])),
     };
   });
 
@@ -1357,11 +1388,45 @@ async function updateLeaguePrefs(claims: Claims, leagueId: string, body: unknown
     }
     prefs.scoringMode = raw.scoringMode;
   }
+  if (raw.benchEnabled !== undefined) {
+    if (typeof raw.benchEnabled !== 'boolean') {
+      throw new HttpError(400, 'invalid-argument', 'benchEnabled must be a boolean.');
+    }
+    prefs.benchEnabled = raw.benchEnabled;
+  }
+  if (raw.benchSlots !== undefined) {
+    const benchSlots = Number(raw.benchSlots);
+    if (!Number.isInteger(benchSlots) || benchSlots < 0 || benchSlots > 16) {
+      throw new HttpError(400, 'invalid-argument', 'Bench slots must be between 0 and 16.');
+    }
+    prefs.benchSlots = benchSlots;
+  }
+  if (raw.benchLocksAtKickoff !== undefined) {
+    if (typeof raw.benchLocksAtKickoff !== 'boolean') {
+      throw new HttpError(400, 'invalid-argument', 'benchLocksAtKickoff must be a boolean.');
+    }
+    prefs.benchLocksAtKickoff = raw.benchLocksAtKickoff;
+  }
   if (Object.keys(prefs).length === 0) {
     throw new HttpError(400, 'invalid-argument', 'Nothing to update.');
   }
 
-  await db().ref(`leagues/${leagueId}/prefs`).update(prefs);
+  if (prefs.benchEnabled === false) {
+    const season = num(leagueValue.season, 2026);
+    const games = await readSeasonGames(db(), season);
+    const meta = await readCurrentMeta(db());
+    const week = deriveActiveWeek(games, Date.now(), meta.currentWeek || 1);
+    const lineupUpdates: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(prefs)) {
+      lineupUpdates[`leagues/${leagueId}/prefs/${key}`] = value;
+    }
+    for (const userId of Object.keys(membersOf(leagueValue))) {
+      lineupUpdates[`leagues/${leagueId}/lineups/${userId}/${week}`] = { _empty: true };
+    }
+    await db().ref().update(lineupUpdates);
+  } else {
+    await db().ref(`leagues/${leagueId}/prefs`).update(prefs);
+  }
   return { ok: true };
 }
 
@@ -1439,8 +1504,8 @@ async function transferCommissioner(claims: Claims, leagueId: string, body: unkn
 async function removeMember(claims: Claims, leagueId: string, body: unknown) {
   const leagueValue = await readLeague(leagueId);
   requireCommissioner(leagueValue, claims.uid);
-  if (str(leagueValue.status) !== 'waiting') {
-    throw new HttpError(409, 'failed-precondition', 'Members can only be removed before the draft starts.');
+  if (str(leagueValue.status) === 'drafting') {
+    throw new HttpError(409, 'failed-precondition', 'Players cannot be removed while the draft is live. Pause and complete the draft first.');
   }
 
   const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
@@ -1454,24 +1519,119 @@ async function removeMember(claims: Claims, leagueId: string, body: unknown) {
     throw new HttpError(400, 'invalid-argument', 'The commissioner cannot be removed.');
   }
 
-  const memberCount = num(leagueValue.memberCount, Object.keys(members).length);
-  const updates: Record<string, unknown> = {
-    memberCount: Math.max(1, memberCount - 1),
-    updatedAt: Date.now(),
-    [`members/${userId}`]: null,
-  };
-
-  // Drop them from any pre-draft order too.
-  const draftRef = db().ref(`drafts/${leagueId}`);
-  const draft = (await draftRef.once('value')).val() as Record<string, unknown> | null;
-  if (draft && Array.isArray(draft.order)) {
-    updates['order'] = (draft.order as string[]).filter((uid) => uid !== userId);
-  }
-
-  await db().ref(`leagues/${leagueId}`).update(updates);
-  await db().ref(`users/${userId}/leagues/${leagueId}`).set(null).catch(() => undefined);
+  await removeMembership(leagueId, leagueValue, userId, false, claims.uid);
 
   return { ok: true };
+}
+
+async function removeMembership(
+  leagueId: string,
+  leagueValue: Record<string, unknown>,
+  userId: string,
+  ban: boolean,
+  actorId: string,
+): Promise<void> {
+  const members = membersOf(leagueValue);
+  const memberCount = num(leagueValue.memberCount, Object.keys(members).length);
+  const updates: Record<string, unknown> = {
+    [`leagues/${leagueId}/memberCount`]: Math.max(1, memberCount - 1),
+    [`leagues/${leagueId}/updatedAt`]: Date.now(),
+    [`leagues/${leagueId}/members/${userId}`]: null,
+    [`leagues/${leagueId}/lineups/${userId}`]: null,
+    [`users/${userId}/leagues/${leagueId}`]: null,
+  };
+  if (ban) updates[`leagues/${leagueId}/bannedUsers/${userId}`] = { at: Date.now(), by: actorId };
+
+  if (str(leagueValue.status) === 'waiting') {
+    const draft = (await db().ref(`drafts/${leagueId}`).once('value')).val() as Record<string, unknown> | null;
+    if (draft && Array.isArray(draft.order)) {
+      updates[`drafts/${leagueId}/order`] = (draft.order as string[]).filter((uid) => uid !== userId);
+    }
+  }
+  await db().ref().update(updates);
+}
+
+async function leaveLeague(claims: Claims, leagueId: string) {
+  const leagueValue = await readLeague(leagueId);
+  requireMember(leagueValue, claims.uid);
+  if (str(leagueValue.commissionerId) === claims.uid) {
+    throw new HttpError(409, 'failed-precondition', 'Transfer commissioner ownership or disband the league before leaving.');
+  }
+  if (str(leagueValue.status) === 'drafting') {
+    throw new HttpError(409, 'failed-precondition', 'You cannot leave while the draft is live.');
+  }
+  await removeMembership(leagueId, leagueValue, claims.uid, false, claims.uid);
+  return { ok: true };
+}
+
+async function banMember(claims: Claims, leagueId: string, body: unknown) {
+  const leagueValue = await readLeague(leagueId);
+  requireCommissioner(leagueValue, claims.uid);
+  if (str(leagueValue.status) === 'drafting') {
+    throw new HttpError(409, 'failed-precondition', 'Players cannot be banned while the draft is live.');
+  }
+  const raw = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  const userId = typeof raw.userId === 'string' ? raw.userId : '';
+  if (!membersOf(leagueValue)[userId]) throw new HttpError(404, 'not-found', 'That member is not in this league.');
+  if (userId === claims.uid) throw new HttpError(400, 'invalid-argument', 'The commissioner cannot be banned.');
+  await removeMembership(leagueId, leagueValue, userId, true, claims.uid);
+  return { ok: true };
+}
+
+async function disbandLeague(claims: Claims, leagueId: string) {
+  const leagueValue = await readLeague(leagueId);
+  requireCommissioner(leagueValue, claims.uid);
+  const updates: Record<string, unknown> = {
+    [`leagues/${leagueId}`]: null,
+    [`drafts/${leagueId}`]: null,
+    [`system/leagueIds/${leagueId}`]: null,
+    [`nfl/seasons/${num(leagueValue.season, 2026)}/projections/${leagueId}`]: null,
+  };
+  const joinCode = str(leagueValue.joinCode);
+  if (joinCode) updates[`leagueCodes/${joinCode}`] = null;
+  for (const userId of Object.keys(membersOf(leagueValue))) updates[`users/${userId}/leagues/${leagueId}`] = null;
+  await db().ref().update(updates);
+  return { ok: true };
+}
+
+async function updateLineup(claims: Claims, leagueId: string, body: unknown) {
+  const leagueValue = await readLeague(leagueId);
+  requireMember(leagueValue, claims.uid);
+  const prefs = (leagueValue.prefs ?? {}) as Record<string, unknown>;
+  if (prefs.benchEnabled !== true) throw new HttpError(409, 'failed-precondition', 'The bench is disabled for this league.');
+
+  const raw = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  if (!Array.isArray(raw.benchedTeamIds)) throw new HttpError(400, 'invalid-argument', 'benchedTeamIds must be an array.');
+  const benchedTeamIds = Array.from(new Set(raw.benchedTeamIds.filter((id): id is string => typeof id === 'string')));
+  const benchSlots = Math.max(0, Math.min(16, num(prefs.benchSlots, 1)));
+  if (benchedTeamIds.length > benchSlots) throw new HttpError(400, 'invalid-argument', `This league allows ${benchSlots} bench slot${benchSlots === 1 ? '' : 's'}.`);
+
+  const picks = (await db().ref(`drafts/${leagueId}/picks`).once('value')).val() as Record<string, Record<string, unknown>> | null;
+  const owned = new Set(Object.values(picks ?? {}).filter((pick) => str(pick.userId) === claims.uid).map((pick) => str(pick.nflTeamId)));
+  if (benchedTeamIds.some((teamId) => !owned.has(teamId))) throw new HttpError(403, 'forbidden', 'You can only bench teams you drafted.');
+
+  const season = num(leagueValue.season, 2026);
+  const games = await readSeasonGames(db(), season);
+  const meta = await readCurrentMeta(db());
+  const currentWeek = deriveActiveWeek(games, Date.now(), meta.currentWeek || 1);
+  const lineupRef = db().ref(`leagues/${leagueId}/lineups/${claims.uid}/${currentWeek}`);
+  const allLineups = (await db().ref(`leagues/${leagueId}/lineups/${claims.uid}`).once('value')).val() as Record<string, Record<string, unknown>> | null;
+  const previousWeek = Object.keys(allLineups ?? {}).map(Number).filter((week) => week <= currentWeek).sort((a, b) => b - a)[0];
+  const previousValue = previousWeek === undefined ? null : allLineups?.[String(previousWeek)] ?? null;
+  const previous = new Set(Object.entries(previousValue ?? {}).filter(([teamId, value]) => teamId !== '_empty' && value === true).map(([teamId]) => teamId));
+
+  if (prefs.benchLocksAtKickoff !== false) {
+    const changed = new Set([...benchedTeamIds.filter((id) => !previous.has(id)), ...Array.from(previous).filter((id) => !benchedTeamIds.includes(id))]);
+    const locked = games.some((game) => {
+      const changedTeamPlays = changed.has(game.homeTeamId) || changed.has(game.awayTeamId);
+      return game.week === currentWeek && changedTeamPlays &&
+        (Date.parse(game.date) <= Date.now() || game.status === 'in_progress' || game.status === 'halftime' || game.final);
+    });
+    if (locked) throw new HttpError(409, 'failed-precondition', 'A changed team has already kicked off this week.');
+  }
+
+  await lineupRef.set(benchedTeamIds.length > 0 ? Object.fromEntries(benchedTeamIds.map((teamId) => [teamId, true])) : { _empty: true });
+  return { ok: true, week: currentWeek, benchedTeamIds };
 }
 
 async function updateProfile(claims: Claims, body: unknown) {
@@ -1606,6 +1766,12 @@ function dispatch(
   if (method === 'PATCH' && segments[0] === 'leagues' && segments[2] === 'prefs' && segments.length === 3) {
     return updateLeaguePrefs(claims, segments[1] as string, body);
   }
+  if (method === 'PATCH' && segments[0] === 'leagues' && segments[2] === 'lineup' && segments.length === 3) {
+    return updateLineup(claims, segments[1] as string, body);
+  }
+  if (method === 'POST' && segments[0] === 'leagues' && segments[2] === 'leave' && segments.length === 3) {
+    return leaveLeague(claims, segments[1] as string);
+  }
   if (method === 'POST' && segments[0] === 'leagues' && segments[2] === 'announcement' && segments.length === 3) {
     return setAnnouncement(claims, segments[1] as string, body);
   }
@@ -1617,6 +1783,12 @@ function dispatch(
   }
   if (method === 'POST' && segments[0] === 'leagues' && segments[2] === 'member' && segments[3] === 'remove' && segments.length === 4) {
     return removeMember(claims, segments[1] as string, body);
+  }
+  if (method === 'POST' && segments[0] === 'leagues' && segments[2] === 'member' && segments[3] === 'ban' && segments.length === 4) {
+    return banMember(claims, segments[1] as string, body);
+  }
+  if (method === 'DELETE' && segments[0] === 'leagues' && segments.length === 2) {
+    return disbandLeague(claims, segments[1] as string);
   }
   if (method === 'POST' && segments[0] === 'leagues' && segments[2] === 'sync' && segments.length === 3) {
     return manualSyncScores(claims, segments[1] as string);

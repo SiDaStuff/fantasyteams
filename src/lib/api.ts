@@ -108,6 +108,7 @@ function date(value: unknown): Date {
 }
 
 function mapLeague(raw: Record<string, unknown>): League {
+  const prefs = (raw.prefs ?? {}) as Record<string, unknown>;
   return {
     id: String(raw.id),
     name: String(raw.name ?? 'Untitled League'),
@@ -121,6 +122,14 @@ function mapLeague(raw: Record<string, unknown>): League {
     memberCount: Number(raw.memberCount ?? 0),
     createdAt: date(raw.createdAt),
     updatedAt: date(raw.updatedAt),
+    prefs: {
+      projectionsEnabled: prefs.projectionsEnabled !== false,
+      projectionsVisible: prefs.projectionsVisible !== false,
+      scoringMode: prefs.scoringMode === 'points' ? 'points' : 'wins',
+      benchEnabled: prefs.benchEnabled === true,
+      benchSlots: Math.max(0, Number(prefs.benchSlots ?? 1) || 0),
+      benchLocksAtKickoff: prefs.benchLocksAtKickoff !== false,
+    },
   };
 }
 
@@ -390,6 +399,9 @@ function mapInsights(raw: Record<string, unknown>): LeagueInsights {
     projectionsEnabled: prefsRaw.projectionsEnabled !== false,
     projectionsVisible: prefsRaw.projectionsVisible !== false,
     scoringMode,
+    benchEnabled: prefsRaw.benchEnabled === true,
+    benchSlots: Math.max(0, Number(prefsRaw.benchSlots ?? 1) || 0),
+    benchLocksAtKickoff: prefsRaw.benchLocksAtKickoff !== false,
   };
   const syncRaw = (raw.sync ?? {}) as Record<string, unknown>;
   const projectionRaw = raw.projection as Record<string, unknown> | null;
@@ -400,6 +412,12 @@ function mapInsights(raw: Record<string, unknown>): LeagueInsights {
     currentWeek: Math.max(1, Number(raw.currentWeek ?? 1) || 1),
     totalWeeks: Number(raw.totalWeeks ?? 18),
     prefs,
+    lineup: {
+      week: Math.max(1, Number((raw.lineup as Record<string, unknown> | undefined)?.week ?? raw.currentWeek ?? 1) || 1),
+      benchedTeamIds: Array.isArray((raw.lineup as Record<string, unknown> | undefined)?.benchedTeamIds)
+        ? ((raw.lineup as Record<string, unknown>).benchedTeamIds as unknown[]).filter((id): id is string => typeof id === 'string')
+        : [],
+    },
     sync: { lastSyncAt: nullableDate(syncRaw.lastSyncAt), lastError: typeof syncRaw.lastError === 'string' ? syncRaw.lastError : null },
     announcement: raw.announcement
       ? {
@@ -723,7 +741,7 @@ export const api = {
 
   async updateLeaguePrefs(
     leagueId: string,
-    patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode },
+    patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode; benchEnabled?: boolean; benchSlots?: number; benchLocksAtKickoff?: boolean },
   ): Promise<void> {
     await request<{ ok: true }>(`/leagues/${encodeURIComponent(leagueId)}/prefs`, {
       method: 'PATCH',
@@ -757,6 +775,28 @@ export const api = {
     await request<{ ok: true }>(`/leagues/${encodeURIComponent(leagueId)}/member/remove`, {
       method: 'POST',
       body: JSON.stringify({ userId }),
+    });
+  },
+
+  async banLeagueMember(leagueId: string, userId: string): Promise<void> {
+    await request<{ ok: true }>(`/leagues/${encodeURIComponent(leagueId)}/member/ban`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  },
+
+  async leaveLeague(leagueId: string): Promise<void> {
+    await request<{ ok: true }>(`/leagues/${encodeURIComponent(leagueId)}/leave`, { method: 'POST' });
+  },
+
+  async disbandLeague(leagueId: string): Promise<void> {
+    await request<{ ok: true }>(`/leagues/${encodeURIComponent(leagueId)}`, { method: 'DELETE' });
+  },
+
+  async updateLineup(leagueId: string, benchedTeamIds: string[]): Promise<{ week: number; benchedTeamIds: string[] }> {
+    return request<{ week: number; benchedTeamIds: string[] }>(`/leagues/${encodeURIComponent(leagueId)}/lineup`, {
+      method: 'PATCH',
+      body: JSON.stringify({ benchedTeamIds }),
     });
   },
 };

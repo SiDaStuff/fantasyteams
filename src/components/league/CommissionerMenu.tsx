@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Crown, RefreshCw, Settings } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Crown, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -102,25 +103,50 @@ function CommissionerModal({
   league?: League;
 }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [visible, setVisible] = useState<boolean | null>(null);
   const [scoringMode, setScoringMode] = useState<ScoringMode | null>(null);
+  const [benchEnabled, setBenchEnabled] = useState<boolean | null>(null);
+  const [benchSlots, setBenchSlots] = useState<number | null>(null);
+  const [benchLocks, setBenchLocks] = useState<boolean | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [confirmDisband, setConfirmDisband] = useState(false);
+  const [disbanding, setDisbanding] = useState(false);
 
-  const resolvedEnabled = enabled ?? insights?.prefs.projectionsEnabled ?? true;
-  const resolvedVisible = visible ?? insights?.prefs.projectionsVisible ?? true;
-  const resolvedMode = scoringMode ?? insights?.prefs.scoringMode ?? 'wins';
+  const resolvedEnabled = enabled ?? insights?.prefs.projectionsEnabled ?? league?.prefs.projectionsEnabled ?? true;
+  const resolvedVisible = visible ?? insights?.prefs.projectionsVisible ?? league?.prefs.projectionsVisible ?? true;
+  const resolvedMode = scoringMode ?? insights?.prefs.scoringMode ?? league?.prefs.scoringMode ?? 'wins';
+  const resolvedBenchEnabled = benchEnabled ?? insights?.prefs.benchEnabled ?? league?.prefs.benchEnabled ?? false;
+  const resolvedBenchSlots = benchSlots ?? insights?.prefs.benchSlots ?? league?.prefs.benchSlots ?? 1;
+  const resolvedBenchLocks = benchLocks ?? insights?.prefs.benchLocksAtKickoff ?? league?.prefs.benchLocksAtKickoff ?? true;
 
-  async function update(patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode }) {
+  async function update(patch: { projectionsEnabled?: boolean; projectionsVisible?: boolean; scoringMode?: ScoringMode; benchEnabled?: boolean; benchSlots?: number; benchLocksAtKickoff?: boolean }) {
     try {
       await api.updateLeaguePrefs(leagueId, patch);
       if (patch.projectionsEnabled !== undefined) setEnabled(patch.projectionsEnabled);
       if (patch.projectionsVisible !== undefined) setVisible(patch.projectionsVisible);
       if (patch.scoringMode !== undefined) setScoringMode(patch.scoringMode);
+      if (patch.benchEnabled !== undefined) setBenchEnabled(patch.benchEnabled);
+      if (patch.benchSlots !== undefined) setBenchSlots(patch.benchSlots);
+      if (patch.benchLocksAtKickoff !== undefined) setBenchLocks(patch.benchLocksAtKickoff);
       toast.push('success', 'Settings saved');
       onSynced();
     } catch (err) {
       toast.push('error', 'Could not save settings', apiErrorMessage(err));
+    }
+  }
+
+  async function disband() {
+    if (disbanding) return;
+    setDisbanding(true);
+    try {
+      await api.disbandLeague(leagueId);
+      toast.push('success', 'League disbanded');
+      navigate('/dashboard', { replace: true });
+    } catch (error) {
+      toast.push('error', 'Could not disband league', apiErrorMessage(error));
+      setDisbanding(false);
     }
   }
 
@@ -154,7 +180,7 @@ function CommissionerModal({
           members={members}
           currentUserId={currentUserId}
           announcement={insights?.announcement ? { text: insights.announcement.text, by: insights.announcement.by } : null}
-          canRemove={false}
+          canRemove={league?.status !== 'drafting'}
           onChanged={onSynced}
         />
 
@@ -203,6 +229,42 @@ function CommissionerModal({
           />
         </div>
 
+        <div className="space-y-3 border-t border-line pt-5">
+          <h3 className="font-display text-sm font-semibold text-white">Bench</h3>
+          <SettingRow
+            label="Enable bench"
+            hint="Benched teams stop earning fantasy points from that NFL week forward."
+            checked={resolvedBenchEnabled}
+            onChange={(value) => void update({ benchEnabled: value })}
+          />
+          {resolvedBenchEnabled ? (
+            <>
+              <div className="rounded-lg border border-line bg-navy-900 px-3.5 py-3">
+                <label htmlFor="benchSlots" className="flex items-center justify-between text-sm font-semibold text-white">
+                  Bench slots <span className="text-electric-300">{resolvedBenchSlots}</span>
+                </label>
+                <input
+                  id="benchSlots"
+                  type="range"
+                  min={1}
+                  max={16}
+                  value={resolvedBenchSlots}
+                  onChange={(event) => setBenchSlots(Number(event.target.value))}
+                  onPointerUp={() => void update({ benchSlots: resolvedBenchSlots })}
+                  onKeyUp={() => void update({ benchSlots: resolvedBenchSlots })}
+                  className="mt-2 h-8 w-full accent-electric-500"
+                />
+              </div>
+              <SettingRow
+                label="Lock at kickoff"
+                hint="Prevent moving a team after its game begins that week."
+                checked={resolvedBenchLocks}
+                onChange={(value) => void update({ benchLocksAtKickoff: value })}
+              />
+            </>
+          ) : null}
+        </div>
+
         <div className="border-t border-line pt-5">
           <h3 className="font-display text-sm font-semibold text-white">Score sync</h3>
           <p className="mt-1 text-sm text-slate-400">
@@ -221,6 +283,22 @@ function CommissionerModal({
           <Crown className="h-3.5 w-3.5 text-gold-400" />
           Commissioner only
         </p>
+
+        <div className="border-t border-rose-500/20 pt-5">
+          <h3 className="text-sm font-semibold text-rose-300">Danger zone</h3>
+          <p className="mt-1 text-xs text-slate-500">Disbanding permanently removes the league for every player.</p>
+          {confirmDisband ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-rose-300">This cannot be undone.</span>
+              <Button size="sm" variant="danger" isLoading={disbanding} onClick={() => void disband()}>Disband permanently</Button>
+              <Button size="sm" variant="ghost" disabled={disbanding} onClick={() => setConfirmDisband(false)}>Cancel</Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="danger" className="mt-3" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setConfirmDisband(true)}>
+              Disband league
+            </Button>
+          )}
+        </div>
       </div>
 
       {canEditLeague && league ? <EditLeagueModal league={league} open={editOpen} onClose={() => setEditOpen(false)} onSaved={onSynced} /> : null}

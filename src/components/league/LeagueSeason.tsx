@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp, ExternalLink, Newspaper, TrendingUp } from 'lucide-react';
 import { Alert } from '@/components/ui/Alert';
@@ -11,6 +12,7 @@ import { TeamLogo } from '@/components/draft/TeamLogo';
 import { DraftBoard } from '@/components/draft/DraftBoard';
 import { ChampionshipOddsChart } from '@/components/league/ChampionshipOddsChart';
 import { CommissionerMenu } from '@/components/league/CommissionerMenu';
+import { LeaveLeagueButton } from '@/components/league/LeaveLeagueButton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { api, apiErrorMessage } from '@/lib/api';
@@ -71,8 +73,9 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
             syncing={syncing}
             setSyncing={setSyncing}
             onSync={() => void handleSync()}
+            league={league}
           />
-        ) : undefined}
+        ) : <LeaveLeagueButton leagueId={leagueId} disabled={league.status === 'drafting'} />}
       >
         <nav className="league-tabs -mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0" aria-label="League sections">
           {TABS.map((item) => (
@@ -116,7 +119,7 @@ export function LeagueSeason({ leagueId, room }: { leagueId: string; room: Draft
         <div className="mt-7">
           {tab === 'overview' ? <OverviewTab insights={insights} myUid={myUid} leagueId={leagueId} /> : null}
           {tab === 'standings' ? <StandingsTab insights={insights} myUid={myUid} leagueId={leagueId} /> : null}
-          {tab === 'teams' ? <TeamsTab insights={insights} myUid={myUid} leagueId={leagueId} /> : null}
+          {tab === 'teams' ? <TeamsTab insights={insights} myUid={myUid} leagueId={leagueId} onChanged={refresh} /> : null}
           {tab === 'draft' ? (
             <Panel className="rounded-xl p-4 sm:p-5">
               <DraftBoard draft={room.draft} members={members} picks={room.picks} />
@@ -139,7 +142,8 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
   const hasOfficialResults = progress.completedGames > 0;
   const isTied = me ? insights.standings.filter((row) => row.totalWins === me.totalWins).length > 1 : false;
 
-  const myTeams = me?.teams ?? [];
+  const benched = new Set(insights.lineup.benchedTeamIds);
+  const myTeams = (me?.teams ?? []).filter((team) => !benched.has(team.teamId));
   const weekData = useNflWeek(insights.season, progress.currentWeek, 60000);
   const external = useExternalNflInsights(insights.season, progress.currentWeek);
   const myTeamIds = new Set((me?.teams ?? []).map((team) => team.teamId));
@@ -354,10 +358,12 @@ function TeamRow({
   team,
   leagueId,
   mode,
+  action,
 }: {
   team: StandingRow['teams'][number];
   leagueId: string;
   mode: 'wins' | 'points';
+  action?: ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 py-3">
@@ -380,9 +386,12 @@ function TeamRow({
           )}
         </div>
       </div>
-      <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-white">
-        {mode === 'points' ? `${team.points}` : `${team.wins}-${team.losses}${team.ties > 0 ? `-${team.ties}` : ''}`}
-      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="font-mono text-sm font-semibold tabular-nums text-white">
+          {mode === 'points' ? `${team.points}` : `${team.wins}-${team.losses}${team.ties > 0 ? `-${team.ties}` : ''}`}
+        </span>
+        {action}
+      </div>
     </div>
   );
 }
@@ -536,10 +545,32 @@ function StandingsRow({
 
 /* ─────────────────────────────── teams ─────────────────────────────── */
 
-function TeamsTab({ insights, myUid, leagueId }: { insights: LeagueInsights; myUid: string | null; leagueId: string }) {
+function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueInsights; myUid: string | null; leagueId: string; onChanged: () => void }) {
   const mode = insights.prefs.scoringMode;
   const mine = insights.standings.find((row) => row.userId === myUid) ?? null;
   const others = insights.standings.filter((row) => row.userId !== myUid);
+  const toast = useToast();
+  const [busyTeam, setBusyTeam] = useState<string | null>(null);
+  const benchedIds = new Set(insights.lineup.benchedTeamIds);
+  const activeTeams = mine?.teams.filter((team) => !benchedIds.has(team.teamId)) ?? [];
+  const benchTeams = mine?.teams.filter((team) => benchedIds.has(team.teamId)) ?? [];
+
+  async function setBenched(teamId: string, benched: boolean) {
+    if (busyTeam) return;
+    const next = benched
+      ? [...insights.lineup.benchedTeamIds, teamId]
+      : insights.lineup.benchedTeamIds.filter((id) => id !== teamId);
+    setBusyTeam(teamId);
+    try {
+      await api.updateLineup(leagueId, next);
+      toast.push('success', benched ? 'Team moved to bench' : 'Team activated');
+      onChanged();
+    } catch (error) {
+      toast.push('error', 'Could not update lineup', apiErrorMessage(error));
+    } finally {
+      setBusyTeam(null);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -550,8 +581,43 @@ function TeamsTab({ insights, myUid, leagueId }: { insights: LeagueInsights; myU
             <p className="mt-3 text-sm text-slate-500">No teams drafted yet.</p>
           ) : (
             <div className="mt-3 divide-y divide-line/60 border-y border-line/60">
-              {mine.teams.map((team) => (
-                <TeamRow key={team.teamId} team={team} leagueId={leagueId} mode={mode} />
+              {activeTeams.map((team) => (
+                <TeamRow
+                  key={team.teamId}
+                  team={team}
+                  leagueId={leagueId}
+                  mode={mode}
+                  action={insights.prefs.benchEnabled ? (
+                    <Button size="sm" variant="ghost" disabled={busyTeam !== null || benchTeams.length >= insights.prefs.benchSlots} onClick={() => void setBenched(team.teamId, true)}>
+                      Bench
+                    </Button>
+                  ) : undefined}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {mine && insights.prefs.benchEnabled ? (
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-lg font-semibold text-white">Bench</h2>
+            <span className="text-xs text-slate-500">{benchTeams.length}/{insights.prefs.benchSlots} slots · Week {insights.lineup.week}</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">Bench changes apply from this week forward{insights.prefs.benchLocksAtKickoff ? ' and lock when each team kicks off' : ''}.</p>
+          {benchTeams.length === 0 ? (
+            <p className="mt-3 rounded-lg border border-dashed border-line px-4 py-5 text-center text-sm text-slate-500">Your bench is empty.</p>
+          ) : (
+            <div className="mt-3 divide-y divide-line/60 border-y border-line/60">
+              {benchTeams.map((team) => (
+                <TeamRow
+                  key={team.teamId}
+                  team={team}
+                  leagueId={leagueId}
+                  mode={mode}
+                  action={<Button size="sm" variant="outline" disabled={busyTeam !== null} onClick={() => void setBenched(team.teamId, false)}>Activate</Button>}
+                />
               ))}
             </div>
           )}

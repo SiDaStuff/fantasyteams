@@ -10,6 +10,7 @@ import { CopyButton } from '@/components/ui/CopyButton';
 import { LeagueHeader } from '@/components/layout/LeagueHeader';
 import { LeagueSeason } from '@/components/league/LeagueSeason';
 import { CommissionerMenu } from '@/components/league/CommissionerMenu';
+import { LeaveLeagueButton } from '@/components/league/LeaveLeagueButton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { api, apiErrorMessage } from '@/lib/api';
@@ -425,7 +426,11 @@ export function LeagueLobby() {
             onSync={() => undefined}
           />
         </div>
-      ) : null}
+      ) : (
+        <div className="mt-6 flex justify-end">
+          <LeaveLeagueButton leagueId={league.id} disabled={league.status === 'drafting'} />
+        </div>
+      )}
     </div>
   );
 }
