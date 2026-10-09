@@ -46,7 +46,6 @@ export interface UserProfile {
   authProvider: string;
   createdAt: Date;
   updatedAt: Date;
-  prefs: LeaguePrefs;
 }
 
 /* ─────────────────────────────── leagues ───────────────────────────────── */
@@ -67,6 +66,7 @@ export interface League {
   memberCount: number;
   createdAt: Date;
   updatedAt: Date;
+  prefs: LeaguePrefs;
 }
 
 /* ─────────────────────────── leagueMembers ─────────────────────────────── */
