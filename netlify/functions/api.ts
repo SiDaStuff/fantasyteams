@@ -67,6 +67,7 @@ import {
   type StandingOwner,
 } from './lib/scoring-core';
 import {
+  deriveActiveWeek,
   readCurrentMeta,
   readSeasonGames,
   syncNflData,
@@ -1151,25 +1152,32 @@ function enrichGame(game: NflGame) {
 
 async function getNflMeta() {
   const meta = await readCurrentMeta(db());
-  return { season: meta.season, currentWeek: meta.currentWeek, lastSyncAt: meta.lastSyncAt || null };
+  const season = meta.season || new Date().getUTCFullYear();
+  const games = await readSeasonGames(db(), season);
+  const currentWeek = deriveActiveWeek(games, Date.now(), meta.currentWeek || 1);
+  return { season, currentWeek, lastSyncAt: meta.lastSyncAt || null };
 }
 
 async function getNflGames(query: QueryParams) {
   const meta = await readCurrentMeta(db());
   const season = queryNumber(query, 'season', meta.season || 2026);
-  const week = queryNumber(query, 'week', meta.currentWeek);
-  const games = (await readSeasonGames(db(), season))
+  const seasonGames = await readSeasonGames(db(), season);
+  const currentWeek = deriveActiveWeek(seasonGames, Date.now(), meta.currentWeek || 1);
+  const week = Math.max(1, queryNumber(query, 'week', currentWeek));
+  const games = seasonGames
     .filter((game) => game.week === week)
     .map(enrichGame)
     .sort((a, b) => a.date.localeCompare(b.date));
-  return { season, week, currentWeek: meta.currentWeek, games };
+  return { season, week, currentWeek, games };
 }
 
 async function getNflExternal(query: QueryParams) {
   const meta = await readCurrentMeta(db());
   const season = queryNumber(query, 'season', meta.season || 2026);
-  const week = queryNumber(query, 'week', meta.currentWeek || 1);
-  const games = (await readSeasonGames(db(), season)).filter((game) => game.week === week);
+  const seasonGames = await readSeasonGames(db(), season);
+  const currentWeek = deriveActiveWeek(seasonGames, Date.now(), meta.currentWeek || 1);
+  const week = Math.max(1, queryNumber(query, 'week', currentWeek));
+  const games = seasonGames.filter((game) => game.week === week);
   return getExternalNflInsights(season, week, games);
 }
 
@@ -1291,7 +1299,7 @@ async function getLeagueStandings(claims: Claims, leagueId: string, query: Query
   return {
     leagueId,
     season,
-    currentWeek: meta.currentWeek,
+    currentWeek: deriveActiveWeek(games, Date.now(), meta.currentWeek || 1),
     standings,
     weeklyWins: result.weeklyWins,
     isCommissioner: str(leagueValue.commissionerId) === claims.uid,

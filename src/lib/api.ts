@@ -261,7 +261,7 @@ function mapNflGame(raw: Record<string, unknown>): NflGameDetail {
 function mapNflMeta(raw: { season?: unknown; currentWeek?: unknown; lastSyncAt?: unknown }): NflMeta {
   return {
     season: Number(raw.season ?? 0),
-    currentWeek: Number(raw.currentWeek ?? 0),
+    currentWeek: Math.max(1, Number(raw.currentWeek ?? 1) || 1),
     lastSyncAt: nullableDate(raw.lastSyncAt),
   };
 }
@@ -277,7 +277,7 @@ function mapStandings(raw: {
   return {
     leagueId: String(raw.leagueId ?? ''),
     season: Number(raw.season ?? 0),
-    currentWeek: Number(raw.currentWeek ?? 0),
+    currentWeek: Math.max(1, Number(raw.currentWeek ?? 1) || 1),
     weeklyWins: raw.weeklyWins ?? {},
     isCommissioner: raw.isCommissioner === true,
     standings: (raw.standings ?? []).map((row) => ({
@@ -341,9 +341,9 @@ function mapProjectionOwner(raw: Record<string, unknown>): ProjectionOwnerRow {
   };
 }
 
-function mapProgress(raw: Record<string, unknown>): SeasonProgress {
+function mapProgress(raw: Record<string, unknown>, currentWeek: number): SeasonProgress {
   return {
-    currentWeek: Number(raw.currentWeek ?? 0),
+    currentWeek: Math.max(1, Number(raw.currentWeek ?? currentWeek) || 1),
     totalWeeks: Number(raw.totalWeeks ?? 18),
     completedGames: Number(raw.completedGames ?? 0),
     inProgressGames: Number(raw.inProgressGames ?? 0),
@@ -397,7 +397,7 @@ function mapInsights(raw: Record<string, unknown>): LeagueInsights {
   return {
     leagueId: String(raw.leagueId ?? ''),
     season: Number(raw.season ?? 0),
-    currentWeek: Number(raw.currentWeek ?? 0),
+    currentWeek: Math.max(1, Number(raw.currentWeek ?? 1) || 1),
     totalWeeks: Number(raw.totalWeeks ?? 18),
     prefs,
     sync: { lastSyncAt: nullableDate(syncRaw.lastSyncAt), lastError: typeof syncRaw.lastError === 'string' ? syncRaw.lastError : null },
@@ -408,7 +408,10 @@ function mapInsights(raw: Record<string, unknown>): LeagueInsights {
           at: date((raw.announcement as Record<string, unknown>).at),
         }
       : null,
-    progress: mapProgress((raw.progress as Record<string, unknown> | undefined) ?? {}),
+    progress: mapProgress(
+      (raw.progress as Record<string, unknown> | undefined) ?? {},
+      Math.max(1, Number(raw.currentWeek ?? 1) || 1),
+    ),
     standings: mapStandingsRows(raw.standings as Array<Record<string, unknown>> | undefined),
     weeklyWins: (raw.weeklyWins as Record<string, Record<string, number>> | undefined) ?? {},
     live:
@@ -639,8 +642,8 @@ export const api = {
     }>(`/nfl/games?season=${season}&week=${week}`);
     return {
       season: Number(raw.season ?? 0),
-      week: Number(raw.week ?? 0),
-      currentWeek: Number(raw.currentWeek ?? 0),
+      week: Math.max(1, Number(raw.week ?? week) || 1),
+      currentWeek: Math.max(1, Number(raw.currentWeek ?? week) || 1),
       games: (raw.games ?? []).map(mapNflGame),
     };
   },

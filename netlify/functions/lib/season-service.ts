@@ -16,7 +16,7 @@ import {
   type StandingOwner,
 } from './scoring-core';
 import { computeGamesVersion, projectSeason, type ProjectionResult } from './simulation-core';
-import { readCurrentMeta, readSeasonGames } from './nfl-service';
+import { deriveActiveWeek, readCurrentMeta, readSeasonGames } from './nfl-service';
 import {
   leaderEventKey,
   leaderMessage,
@@ -244,7 +244,8 @@ export async function buildLeagueInsights(
   const games = await readSeasonGames(db, season);
   const seasonMetaSnapshot = await db.ref(`nfl/seasons/${season}/meta`).once('value');
   const seasonMeta = (seasonMetaSnapshot.exists() ? seasonMetaSnapshot.val() : {}) as Record<string, unknown>;
-  const currentWeek = num(seasonMeta.currentWeek, season === meta.season ? meta.currentWeek : 1);
+  const storedCurrentWeek = num(seasonMeta.currentWeek, season === meta.season ? meta.currentWeek : 1);
+  const currentWeek = deriveActiveWeek(games, Date.now(), storedCurrentWeek > 0 ? storedCurrentWeek : 1);
 
   const picksSnapshot = await db.ref(`drafts/${leagueId}/picks`).once('value');
   const picks = picksSnapshot.exists() ? (picksSnapshot.val() as Record<string, Record<string, unknown>>) : null;
@@ -293,7 +294,8 @@ export async function buildLeagueInsights(
 
   // Leader + closest competitors from the official standings.
   const leaderRow = standings[0];
-  const leader = leaderRow
+  const runnerUp = standings[1];
+  const leader = leaderRow && leaderRow.totalWins > 0 && (!runnerUp || leaderRow.totalWins > runnerUp.totalWins)
     ? { userId: leaderRow.userId, displayName: leaderRow.displayName, wins: leaderRow.totalWins }
     : null;
   const closestCompetitors = standings

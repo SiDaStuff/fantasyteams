@@ -136,6 +136,8 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
   const leader = insights.leader;
   const { progress } = insights;
   const mode = insights.prefs.scoringMode;
+  const hasOfficialResults = progress.completedGames > 0;
+  const isTied = me ? insights.standings.filter((row) => row.totalWins === me.totalWins).length > 1 : false;
 
   const myTeams = me?.teams ?? [];
   const weekData = useNflWeek(insights.season, progress.currentWeek, 60000);
@@ -161,14 +163,19 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
             <div>
               <p className="text-sm text-slate-400">You're in</p>
               <p className="font-display text-4xl font-bold tabular-nums text-white">
-                {ordinal(me.rank)}
+                {hasOfficialResults ? ordinal(me.rank) : '—'}
               </p>
             </div>
             <div>
               <p className="text-sm text-slate-400">{totalScoreLabel(mode)}</p>
               <p className="font-display text-4xl font-bold tabular-nums text-white">{me.totalWins}</p>
             </div>
-            {me.winsBehind > 0 ? (
+            {!hasOfficialResults ? (
+              <div>
+                <p className="text-sm text-slate-400">Status</p>
+                <p className="font-display text-lg font-semibold text-slate-300">Awaiting results</p>
+              </div>
+            ) : me.winsBehind > 0 ? (
               <div>
                 <p className="text-sm text-slate-400">{behindLabel(mode)}</p>
                 <p className="font-display text-4xl font-bold tabular-nums text-slate-400">{me.winsBehind}</p>
@@ -176,7 +183,9 @@ function OverviewTab({ insights, myUid, leagueId }: { insights: LeagueInsights; 
             ) : (
               <div>
                 <p className="text-sm text-slate-400">Place</p>
-                <p className="font-display text-4xl font-bold tabular-nums text-gold-300">1st</p>
+                <p className="font-display text-4xl font-bold tabular-nums text-gold-300">
+                  {isTied ? `Tied ${ordinal(me.rank)}` : ordinal(me.rank)}
+                </p>
               </div>
             )}
           </div>

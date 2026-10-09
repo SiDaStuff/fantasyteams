@@ -31,4 +31,8 @@ describe('active NFL week', () => {
     const now = Date.parse('2027-03-01T00:00:00Z');
     expect(deriveActiveWeek([game(18, '2027-01-04T01:00:00Z', 'final')], now)).toBe(18);
   });
+
+  it('never exposes week zero when metadata and schedule are empty', () => {
+    expect(deriveActiveWeek([], Date.parse('2026-10-09T12:00:00Z'), 0)).toBe(1);
+  });
 });

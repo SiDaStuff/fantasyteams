@@ -426,8 +426,13 @@ export async function syncNflData(db: Database): Promise<{ season: number; curre
     //    projections and season progress see every remaining game; afterwards
     //    refresh the active week and its neighbors so Thursday/Monday boundary
     //    changes are picked up even when provider metadata lags.
+    const cachedGames = await readSeasonGames(db, season);
+    const cachedRegularWeeks = new Set(
+      cachedGames.filter((game) => game.week >= 1 && game.week <= SCHEDULE_WEEKS).map((game) => game.week),
+    );
+    const scheduleIncomplete = cachedRegularWeeks.size < SCHEDULE_WEEKS;
     const weeks =
-      meta.lastFullSyncWeek === 0 || currentWeek === 0
+      scheduleIncomplete || meta.lastFullSyncWeek === 0 || currentWeek === 0
         ? Array.from({ length: SCHEDULE_WEEKS }, (_, i) => i + 1)
         : meta.lastFullSyncWeek >= currentWeek
           ? Array.from(new Set([currentWeek - 1, currentWeek, currentWeek + 1])).filter((week) => week >= 1 && week <= SCHEDULE_WEEKS)
