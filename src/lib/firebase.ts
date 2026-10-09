@@ -17,6 +17,9 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  databaseURL:
+    import.meta.env.VITE_FIREBASE_DATABASE_URL ??
+    `https://${import.meta.env.VITE_FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`,
 };
 
 export function isFirebaseConfigured(): boolean {
@@ -51,6 +54,9 @@ function ensureInitialized(): void {
   if (import.meta.env.VITE_USE_EMULATORS === 'true') {
     void import('firebase/auth').then(({ connectAuthEmulator }) => {
       connectAuthEmulator(auth as Auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    });
+    void import('firebase/database').then(({ connectDatabaseEmulator }) => {
+      connectDatabaseEmulator(database as Database, '127.0.0.1', 9000);
     });
   }
 }

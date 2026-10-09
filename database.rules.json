@@ -3,8 +3,11 @@
     ".read": false,
     ".write": false,
     "realtimeSignals": {
-      ".read": "auth != null",
+      ".read": false,
       ".write": false,
+      "global": {
+        ".read": "auth != null"
+      },
       "leagues": {
         "$leagueId": {
           ".read": "auth != null && root.child('leagues').child($leagueId).child('members').child(auth.uid).exists()"
