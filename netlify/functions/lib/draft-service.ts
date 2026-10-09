@@ -8,6 +8,7 @@
  * the Firebase Admin SDK through a `Database` handle.
  */
 import type { Database } from 'firebase-admin/database';
+import { randomUUID } from 'node:crypto';
 import type { DraftFormat } from '../../../src/types';
 import { NFL_TEAMS_BY_ID } from '../../../src/data/nflTeams';
 import {
@@ -114,24 +115,32 @@ export function autopick(draft: DraftValue, timerMs: number, now: number): Draft
  * reliably everywhere, with atomicity preserved because all draft fields live
  * on a single node and concurrent writers are serialized by the lock.
  */
-const DRAFT_LOCK_LEASE_MS = 3000;
+const DRAFT_LOCK_LEASE_MS = 10000;
 
-export async function acquireDraftLock(db: Database, draftId: string, owner: string, attempts = 4): Promise<boolean> {
+export async function acquireDraftLock(db: Database, draftId: string, owner: string, attempts = 4): Promise<string | null> {
   const lockRef = db.ref(`drafts/${draftId}/_lock`);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const lock = (await lockRef.once('value')).val() as { owner?: string; at?: number } | null;
-    if (lock && lock.owner !== owner && Date.now() - Number(lock.at ?? 0) < DRAFT_LOCK_LEASE_MS) {
+    const token = `${owner}:${randomUUID()}`;
+    const now = Date.now();
+    const result = await lockRef.transaction((current) => {
+      const lock = current as { at?: number } | null;
+      if (lock && now - Number(lock.at ?? 0) < DRAFT_LOCK_LEASE_MS) return;
+      return { owner, token, at: now };
+    });
+    if (result.committed) return token;
+    if (attempt < attempts - 1) {
       await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)));
-      continue;
     }
-    await lockRef.set({ owner, at: Date.now() });
-    return true;
   }
-  return false;
+  return null;
 }
 
-export async function releaseDraftLock(db: Database, draftId: string): Promise<void> {
-  await db.ref(`drafts/${draftId}/_lock`).set(null).catch(() => undefined);
+export async function releaseDraftLock(db: Database, draftId: string, token: string): Promise<void> {
+  const lockRef = db.ref(`drafts/${draftId}/_lock`);
+  await lockRef.transaction((current) => {
+    const lock = current as { token?: string } | null;
+    return lock?.token === token ? null : undefined;
+  }).catch(() => undefined);
 }
 
 /** A lock child alone does not mean the draft has been initialized. */
@@ -140,14 +149,14 @@ export async function ensureDraftInitialized(db: Database, draftId: string, init
   const hasStatus = (value: DraftValue | null): boolean => typeof value?.status === 'string' && value.status !== '';
   if (hasStatus((await draftRef.once('value')).val() as DraftValue | null)) return;
 
-  const locked = await acquireDraftLock(db, draftId, 'init');
-  if (!locked) return;
+  const lockToken = await acquireDraftLock(db, draftId, 'init');
+  if (!lockToken) return;
   try {
     // Acquiring _lock creates the parent node even when no draft exists yet.
     if (hasStatus((await draftRef.once('value')).val() as DraftValue | null)) return;
     await draftRef.set(initialValue);
   } finally {
-    await releaseDraftLock(db, draftId);
+    await releaseDraftLock(db, draftId, lockToken);
   }
 }
 
@@ -158,8 +167,8 @@ export async function ensureDraftInitialized(db: Database, draftId: string, init
  */
 export async function reconcileDraft(db: Database, leagueId: string, timerMs: number): Promise<{ completed: boolean }> {
   const draftRef = db.ref(`drafts/${leagueId}`);
-  const locked = await acquireDraftLock(db, leagueId, 'sync');
-  if (!locked) return { completed: false }; // another writer in progress — skip
+  const lockToken = await acquireDraftLock(db, leagueId, 'sync');
+  if (!lockToken) return { completed: false }; // another writer in progress — skip
 
   try {
     const snapshot = await draftRef.once('value');
@@ -174,7 +183,7 @@ export async function reconcileDraft(db: Database, leagueId: string, timerMs: nu
     await draftRef.set(next);
     return { completed: str(next.status) === 'completed' };
   } finally {
-    await releaseDraftLock(db, leagueId);
+    await releaseDraftLock(db, leagueId, lockToken);
   }
 }
 

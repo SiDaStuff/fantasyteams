@@ -28,6 +28,19 @@ function databaseFixture(initial: DraftValue | null, onLock?: () => DraftValue) 
             if (Object.keys(value).length === 0) value = null;
           }
         },
+        async transaction(update: (current: unknown) => unknown) {
+          if (!isLock) throw new Error('Transactions are only supported for lock references in this fixture');
+          const current = structuredClone(value?._lock ?? null);
+          const next = update(current);
+          if (next === undefined) return { committed: false };
+          if (next === null) {
+            if (value) delete value._lock;
+          } else {
+            value = { ...(value ?? {}), _lock: structuredClone(next) };
+            if (onLock) value = { ...onLock(), _lock: structuredClone(next) };
+          }
+          return { committed: true };
+        },
       };
     },
   } as unknown as Database;

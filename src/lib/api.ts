@@ -807,6 +807,10 @@ export const api = {
     });
   },
 
+  async dropTeam(leagueId: string, teamId: string): Promise<void> {
+    await request(`/leagues/${encodeURIComponent(leagueId)}/teams/drop/${encodeURIComponent(teamId)}`, { method: 'POST' });
+  },
+
   async getTeamMarket(leagueId: string): Promise<TeamMarket> {
     const raw = await request<Record<string, unknown>>(`/leagues/${encodeURIComponent(leagueId)}/market`);
     return {

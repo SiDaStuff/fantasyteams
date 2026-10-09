@@ -656,6 +656,8 @@ function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueIn
   const others = insights.standings.filter((row) => row.userId !== myUid);
   const toast = useToast();
   const [busyTeam, setBusyTeam] = useState<string | null>(null);
+  const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
+  const [swapTargets, setSwapTargets] = useState<Record<string, string>>({});
   const benchedIds = new Set(insights.lineup.benchedTeamIds);
   const activeTeams = mine?.teams.filter((team) => !benchedIds.has(team.teamId)) ?? [];
   const benchTeams = mine?.teams.filter((team) => benchedIds.has(team.teamId)) ?? [];
@@ -675,6 +677,50 @@ function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueIn
     } finally {
       setBusyTeam(null);
     }
+  }
+
+  async function drop(teamId: string) {
+    if (busyTeam) return;
+    setBusyTeam(teamId);
+    try {
+      await api.dropTeam(leagueId, teamId);
+      toast.push('success', 'Team dropped and returned to Available');
+      setConfirmDrop(null);
+      onChanged();
+    } catch (error) {
+      toast.push('error', 'Could not drop team', apiErrorMessage(error));
+    } finally {
+      setBusyTeam(null);
+    }
+  }
+
+  async function swap(benchedTeamId: string) {
+    if (busyTeam) return;
+    const activeTeamId = swapTargets[benchedTeamId] ?? activeTeams[0]?.teamId;
+    if (!activeTeamId) return;
+    const next = insights.lineup.benchedTeamIds.map((id) => id === benchedTeamId ? activeTeamId : id);
+    setBusyTeam(benchedTeamId);
+    try {
+      await api.updateLineup(leagueId, next);
+      toast.push('success', 'Teams swapped');
+      onChanged();
+    } catch (error) {
+      toast.push('error', 'Could not swap teams', apiErrorMessage(error));
+    } finally {
+      setBusyTeam(null);
+    }
+  }
+
+  function dropAction(teamId: string) {
+    if (confirmDrop === teamId) {
+      return (
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="danger" disabled={busyTeam !== null} onClick={() => void drop(teamId)}>Confirm</Button>
+          <Button size="sm" variant="ghost" disabled={busyTeam !== null} onClick={() => setConfirmDrop(null)}>Cancel</Button>
+        </div>
+      );
+    }
+    return <Button size="sm" variant="ghost" disabled={busyTeam !== null} onClick={() => setConfirmDrop(teamId)}>Drop</Button>;
   }
 
   return (
@@ -699,10 +745,13 @@ function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueIn
                   leagueId={leagueId}
                   mode={mode}
                   action={insights.prefs.benchEnabled ? (
-                    <Button size="sm" variant="ghost" disabled={busyTeam !== null || benchTeams.length >= insights.prefs.benchSlots} onClick={() => void setBenched(team.teamId, true)}>
-                      Bench
-                    </Button>
-                  ) : undefined}
+                    <div className="flex items-center gap-1">
+                      <Button size="sm" variant="ghost" disabled={busyTeam !== null || benchTeams.length >= insights.prefs.benchSlots} onClick={() => void setBenched(team.teamId, true)}>
+                        Bench
+                      </Button>
+                      {dropAction(team.teamId)}
+                    </div>
+                  ) : dropAction(team.teamId)}
                 />
               ))}
             </div>
@@ -727,7 +776,27 @@ function TeamsTab({ insights, myUid, leagueId, onChanged }: { insights: LeagueIn
                   team={team}
                   leagueId={leagueId}
                   mode={mode}
-                  action={<Button size="sm" variant="outline" disabled={busyTeam !== null || activeTeams.length >= insights.prefs.maxActiveTeams} onClick={() => void setBenched(team.teamId, false)}>Activate</Button>}
+                  action={(
+                    <div className="flex flex-wrap items-center justify-end gap-1">
+                      {activeTeams.length < insights.prefs.maxActiveTeams ? (
+                        <Button size="sm" variant="outline" disabled={busyTeam !== null} onClick={() => void setBenched(team.teamId, false)}>Activate</Button>
+                      ) : activeTeams.length > 0 ? (
+                        <>
+                          <select
+                            value={swapTargets[team.teamId] ?? activeTeams[0]?.teamId}
+                            onChange={(event) => setSwapTargets((current) => ({ ...current, [team.teamId]: event.target.value }))}
+                            disabled={busyTeam !== null}
+                            className="focus-ring h-9 max-w-32 rounded-lg border border-line bg-navy-950 px-2 text-xs text-white"
+                            aria-label={`Choose an active team to swap with ${team.name}`}
+                          >
+                            {activeTeams.map((activeTeam) => <option key={activeTeam.teamId} value={activeTeam.teamId}>{activeTeam.abbreviation}</option>)}
+                          </select>
+                          <Button size="sm" variant="outline" disabled={busyTeam !== null} onClick={() => void swap(team.teamId)}>Swap</Button>
+                        </>
+                      ) : null}
+                      {dropAction(team.teamId)}
+                    </div>
+                  )}
                 />
               ))}
             </div>

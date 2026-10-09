@@ -20,6 +20,7 @@
  *   GET    /leagues/:id/draft                draft-room payload
  *   POST   /leagues/:id/draft/{start|pick|pause|resume|order{,/randomize}}
  *   PATCH  /leagues/:id/draft                pre-draft settings
+ *   POST   /leagues/:id/teams/drop/:teamId   release one owned team
  *   GET    /leagues/:id/standings | /insights
  *   PATCH  /leagues/:id/prefs                commissioner projection prefs
  *   POST   /leagues/:id/sync                 commissioner NFL refresh
@@ -523,6 +524,32 @@ function sleep(ms: number): Promise<void> {
 }
 
 const MAX_JOIN_ATTEMPTS = 3;
+const MAX_LEAGUE_MUTATION_ATTEMPTS = 4;
+
+async function acquireLeagueMutationLock(leagueId: string, owner: string): Promise<() => Promise<void>> {
+  const lockRef = db().ref(`leagues/${leagueId}/mutationLock`);
+  for (let attempt = 0; attempt < MAX_LEAGUE_MUTATION_ATTEMPTS; attempt += 1) {
+  const token = `${owner}:${randomInt(1_000_000_000)}`;
+  const now = Date.now();
+  const result = await lockRef.transaction((current) => {
+    const lock = current as { at?: number } | null;
+    if (lock && now - Number(lock.at ?? 0) < 10000) return;
+    return { owner, token, at: now };
+  });
+  if (result.committed) {
+    return async () => {
+      await lockRef.transaction((current) => {
+        const lock = current as { token?: string } | null;
+        return lock?.token === token ? null : undefined;
+      }).catch(() => undefined);
+    };
+  }
+  if (attempt < MAX_LEAGUE_MUTATION_ATTEMPTS - 1) {
+    await sleep(120 * (attempt + 1));
+  }
+}
+  throw new HttpError(409, 'conflict', 'Another roster action is in progress. Try again.');
+}
 
 async function joinLeague(claims: Claims, body: unknown) {
   const code = validJoinCode(body && typeof body === 'object' ? (body as Record<string, unknown>).code : null);
@@ -892,8 +919,8 @@ async function startDraft(claims: Claims, leagueId: string, body: unknown): Prom
   const pickSequence = buildPickSequence(order, order.length, rounds, format);
   const totalPicks = totalPicksFor(order.length, rounds);
 
-  const locked = await acquireDraftLock(db(), leagueId, claims.uid);
-  if (!locked) {
+  const lockToken = await acquireDraftLock(db(), leagueId, claims.uid);
+  if (!lockToken) {
     throw new HttpError(409, 'conflict', 'The draft is busy. Try again.');
   }
   try {
@@ -917,7 +944,7 @@ async function startDraft(claims: Claims, leagueId: string, body: unknown): Prom
       completedAt: null,
     });
   } finally {
-    await releaseDraftLock(db(), leagueId);
+    await releaseDraftLock(db(), leagueId, lockToken);
   }
 
   await db().ref(`leagues/${leagueId}`).update({ status: 'drafting', updatedAt: now });
@@ -937,8 +964,8 @@ async function submitPick(claims: Claims, leagueId: string, body: unknown): Prom
   const timerMs = num(leagueValue.draftPickTimerSeconds, 60) * 1000;
   const draftRef = db().ref(`drafts/${leagueId}`);
 
-  const locked = await acquireDraftLock(db(), leagueId, claims.uid);
-  if (!locked) {
+  const lockToken = await acquireDraftLock(db(), leagueId, claims.uid);
+  if (!lockToken) {
     throw new HttpError(409, 'conflict', 'The draft is busy. Try again.');
   }
 
@@ -1004,7 +1031,7 @@ async function submitPick(claims: Claims, leagueId: string, body: unknown): Prom
     const pickerName = str(memberValue(membersOf(leagueValue), claims.uid).displayName, 'Player');
     await pushActivity(db(), leagueId, draftEventKey(pickNumber), 'draft', draftPickMessage(pickerName, team.nickname));
   } finally {
-    await releaseDraftLock(db(), leagueId);
+    await releaseDraftLock(db(), leagueId, lockToken);
   }
 
   return getDraftRoom(claims, leagueId);
@@ -1043,7 +1070,7 @@ async function initializeCompletedDraftLineups(
   for (const [userId, entries] of teamsByUser) {
     const teams = entries.sort((a, b) => a.pickNumber - b.pickNumber).map((entry) => entry.teamId).slice(0, maxTeams);
     const requiredBench = Math.min(benchSlots, Math.max(0, teams.length - maxActive));
-    const benched = teams.slice(-requiredBench);
+    const benched = shuffled(teams).slice(0, requiredBench);
     updates[`leagues/${leagueId}/lineups/${userId}/${effectiveWeek}`] = benched.length > 0
       ? Object.fromEntries(benched.map((teamId) => [teamId, true]))
       : { _empty: true };
@@ -1056,8 +1083,8 @@ async function pauseDraft(claims: Claims, leagueId: string): Promise<DraftRoomPa
   requireCommissioner(leagueValue, claims.uid);
 
   const draftRef = db().ref(`drafts/${leagueId}`);
-  const locked = await acquireDraftLock(db(), leagueId, claims.uid);
-  if (!locked) throw new HttpError(409, 'conflict', 'The draft is busy. Try again.');
+  const lockToken = await acquireDraftLock(db(), leagueId, claims.uid);
+  if (!lockToken) throw new HttpError(409, 'conflict', 'The draft is busy. Try again.');
   try {
     const value = (await draftRef.once('value')).val() as Record<string, unknown> | null;
     if (!value || str(value.status) !== 'live') {
@@ -1074,7 +1101,7 @@ async function pauseDraft(claims: Claims, leagueId: string): Promise<DraftRoomPa
       pausedAt: now,
     });
   } finally {
-    await releaseDraftLock(db(), leagueId);
+    await releaseDraftLock(db(), leagueId, lockToken);
   }
 
   return getDraftRoom(claims, leagueId);
@@ -1086,8 +1113,8 @@ async function resumeDraft(claims: Claims, leagueId: string): Promise<DraftRoomP
 
   const timerMs = num(leagueValue.draftPickTimerSeconds, 60) * 1000;
   const draftRef = db().ref(`drafts/${leagueId}`);
-  const locked = await acquireDraftLock(db(), leagueId, claims.uid);
-  if (!locked) throw new HttpError(409, 'conflict', 'The draft is busy. Try again.');
+  const lockToken = await acquireDraftLock(db(), leagueId, claims.uid);
+  if (!lockToken) throw new HttpError(409, 'conflict', 'The draft is busy. Try again.');
   try {
     const value = (await draftRef.once('value')).val() as Record<string, unknown> | null;
     if (!value || str(value.status) !== 'paused') {
@@ -1102,7 +1129,7 @@ async function resumeDraft(claims: Claims, leagueId: string): Promise<DraftRoomP
       pausedAt: null,
     });
   } finally {
-    await releaseDraftLock(db(), leagueId);
+    await releaseDraftLock(db(), leagueId, lockToken);
   }
 
   return getDraftRoom(claims, leagueId);
@@ -1792,6 +1819,37 @@ async function updateLineup(claims: Claims, leagueId: string, body: unknown) {
   return { ok: true, week: currentWeek, benchedTeamIds };
 }
 
+async function dropTeam(claims: Claims, leagueId: string, teamId: string) {
+  const leagueValue = await readLeague(leagueId);
+  requireMember(leagueValue, claims.uid);
+  if (str(leagueValue.status) === 'drafting') {
+    throw new HttpError(409, 'failed-precondition', 'Teams cannot be dropped while the draft is live.');
+  }
+  if (!NFL_TEAMS_BY_ID[teamId]) throw new HttpError(404, 'not-found', 'NFL team not found.');
+
+  const release = await acquireLeagueMutationLock(leagueId, claims.uid);
+  try {
+    const context = await readOwnershipContext(leagueId, leagueValue);
+    if (context.owners.get(teamId) !== claims.uid) {
+      throw new HttpError(403, 'forbidden', 'You do not own that team.');
+    }
+
+    const updates: Record<string, unknown> = {
+      [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${teamId}`]: '_available',
+    };
+    const bench = currentBenchFor(leagueValue, claims.uid, context.effectiveWeek);
+    if (bench.includes(teamId)) {
+      const nextBench = bench.filter((id) => id !== teamId);
+      updates[`leagues/${leagueId}/lineups/${claims.uid}/${context.effectiveWeek}`] =
+        nextBench.length > 0 ? Object.fromEntries(nextBench.map((id) => [id, true])) : { _empty: true };
+    }
+    await db().ref().update(updates);
+    return { ok: true, effectiveWeek: context.effectiveWeek };
+  } finally {
+    await release();
+  }
+}
+
 interface OwnershipContext {
   currentWeek: number;
   effectiveWeek: number;
@@ -1861,26 +1919,31 @@ async function claimAvailableTeam(claims: Claims, leagueId: string, teamId: stri
   const prefs = (leagueValue.prefs ?? {}) as Record<string, unknown>;
   if (prefs.tradingEnabled !== true) throw new HttpError(409, 'failed-precondition', 'Player trading is disabled.');
   if (!NFL_TEAMS_BY_ID[teamId]) throw new HttpError(404, 'not-found', 'NFL team not found.');
-  const context = await readOwnershipContext(leagueId, leagueValue);
-  const ownerId = context.owners.get(teamId);
-  if (ownerId && ownerId !== '_available' && membersOf(leagueValue)[ownerId]) throw new HttpError(409, 'already-exists', 'That team already has an owner.');
-  const owned = Array.from(context.owners.entries()).filter(([, uid]) => uid === claims.uid).map(([id]) => id);
-  const maxTeams = Math.max(1, Math.min(16, num(prefs.maxTeamsPerPlayer, 16)));
-  if (owned.length >= maxTeams) throw new HttpError(409, 'failed-precondition', 'Your roster is already full.');
+  const release = await acquireLeagueMutationLock(leagueId, claims.uid);
+  try {
+    const context = await readOwnershipContext(leagueId, leagueValue);
+    const ownerId = context.owners.get(teamId);
+    if (ownerId && ownerId !== '_available' && membersOf(leagueValue)[ownerId]) throw new HttpError(409, 'already-exists', 'That team already has an owner.');
+    const owned = Array.from(context.owners.entries()).filter(([, uid]) => uid === claims.uid).map(([id]) => id);
+    const maxTeams = Math.max(1, Math.min(16, num(prefs.maxTeamsPerPlayer, 16)));
+    if (owned.length >= maxTeams) throw new HttpError(409, 'failed-precondition', 'Your roster is already full.');
 
-  const updates: Record<string, unknown> = {
-    [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${teamId}`]: claims.uid,
-  };
-  const maxActive = Math.max(1, Math.min(maxTeams, num(prefs.maxActiveTeams, maxTeams)));
-  if (prefs.benchEnabled === true && owned.length >= maxActive) {
-    const bench = currentBenchFor(leagueValue, claims.uid, context.effectiveWeek);
-    const slots = Math.max(0, Math.min(16, num(prefs.benchSlots, 1)));
-    if (bench.length >= slots) throw new HttpError(409, 'failed-precondition', 'Your active roster and bench are full.');
-    const nextBench = [...bench, teamId];
-    updates[`leagues/${leagueId}/lineups/${claims.uid}/${context.effectiveWeek}`] = Object.fromEntries(nextBench.map((id) => [id, true]));
+    const updates: Record<string, unknown> = {
+      [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${teamId}`]: claims.uid,
+    };
+    const maxActive = Math.max(1, Math.min(maxTeams, num(prefs.maxActiveTeams, maxTeams)));
+    if (prefs.benchEnabled === true && owned.length >= maxActive) {
+      const bench = currentBenchFor(leagueValue, claims.uid, context.effectiveWeek);
+      const slots = Math.max(0, Math.min(16, num(prefs.benchSlots, 1)));
+      if (bench.length >= slots) throw new HttpError(409, 'failed-precondition', 'Your active roster and bench are full.');
+      const nextBench = [...bench, teamId];
+      updates[`leagues/${leagueId}/lineups/${claims.uid}/${context.effectiveWeek}`] = Object.fromEntries(nextBench.map((id) => [id, true]));
+    }
+    await db().ref().update(updates);
+    return { ok: true, effectiveWeek: context.effectiveWeek };
+  } finally {
+    await release();
   }
-  await db().ref().update(updates);
-  return { ok: true, effectiveWeek: context.effectiveWeek };
 }
 
 async function proposeTrade(claims: Claims, leagueId: string, body: unknown) {
@@ -1891,15 +1954,20 @@ async function proposeTrade(claims: Claims, leagueId: string, body: unknown) {
   const raw = body && typeof body === 'object' ? body as Record<string, unknown> : {};
   const offeredTeamId = str(raw.offeredTeamId);
   const requestedTeamId = str(raw.requestedTeamId);
-  const context = await readOwnershipContext(leagueId, leagueValue);
-  const toUserId = context.owners.get(requestedTeamId) ?? '';
-  if (context.owners.get(offeredTeamId) !== claims.uid) throw new HttpError(403, 'forbidden', 'You do not own the offered team.');
-  if (!toUserId || toUserId === '_available' || toUserId === claims.uid || !membersOf(leagueValue)[toUserId]) {
-    throw new HttpError(400, 'invalid-argument', 'Choose a team owned by another player.');
+  const release = await acquireLeagueMutationLock(leagueId, claims.uid);
+  try {
+    const context = await readOwnershipContext(leagueId, leagueValue);
+    const toUserId = context.owners.get(requestedTeamId) ?? '';
+    if (context.owners.get(offeredTeamId) !== claims.uid) throw new HttpError(403, 'forbidden', 'You do not own the offered team.');
+    if (!toUserId || toUserId === '_available' || toUserId === claims.uid || !membersOf(leagueValue)[toUserId]) {
+      throw new HttpError(400, 'invalid-argument', 'Choose a team owned by another player.');
+    }
+    const ref = db().ref(`leagues/${leagueId}/trades`).push();
+    await ref.set({ fromUserId: claims.uid, toUserId, offeredTeamId, requestedTeamId, status: 'pending', createdAt: Date.now() });
+    return { ok: true, tradeId: ref.key };
+  } finally {
+    await release();
   }
-  const ref = db().ref(`leagues/${leagueId}/trades`).push();
-  await ref.set({ fromUserId: claims.uid, toUserId, offeredTeamId, requestedTeamId, status: 'pending', createdAt: Date.now() });
-  return { ok: true, tradeId: ref.key };
 }
 
 async function respondToTrade(claims: Claims, leagueId: string, tradeId: string, body: unknown) {
@@ -1907,39 +1975,44 @@ async function respondToTrade(claims: Claims, leagueId: string, tradeId: string,
   requireMember(leagueValue, claims.uid);
   const prefs = (leagueValue.prefs ?? {}) as Record<string, unknown>;
   if (prefs.tradingEnabled !== true) throw new HttpError(409, 'failed-precondition', 'Player trading is disabled.');
-  const ref = db().ref(`leagues/${leagueId}/trades/${tradeId}`);
-  const snapshot = await ref.once('value');
-  if (!snapshot.exists()) throw new HttpError(404, 'not-found', 'Trade offer not found.');
-  const trade = snapshot.val() as Record<string, unknown>;
-  if (str(trade.toUserId) !== claims.uid) throw new HttpError(403, 'forbidden', 'Only the receiving player can answer this offer.');
-  if (str(trade.status) !== 'pending') throw new HttpError(409, 'failed-precondition', 'This trade offer is already closed.');
-  const accept = body && typeof body === 'object' && (body as Record<string, unknown>).accept === true;
-  if (!accept) {
-    await ref.update({ status: 'rejected', respondedAt: Date.now() });
-    return { ok: true, status: 'rejected' };
-  }
-  const context = await readOwnershipContext(leagueId, leagueValue);
-  const offeredTeamId = str(trade.offeredTeamId);
-  const requestedTeamId = str(trade.requestedTeamId);
-  const fromUserId = str(trade.fromUserId);
-  if (context.owners.get(offeredTeamId) !== fromUserId || context.owners.get(requestedTeamId) !== claims.uid) {
-    throw new HttpError(409, 'failed-precondition', 'Team ownership changed after this offer was created.');
-  }
-  const updates: Record<string, unknown> = {
-    [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${offeredTeamId}`]: claims.uid,
-    [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${requestedTeamId}`]: fromUserId,
-    [`leagues/${leagueId}/trades/${tradeId}/status`]: 'accepted',
-    [`leagues/${leagueId}/trades/${tradeId}/respondedAt`]: Date.now(),
-  };
-  for (const [userId, outgoing, incoming] of [[fromUserId, offeredTeamId, requestedTeamId], [claims.uid, requestedTeamId, offeredTeamId]] as const) {
-    const bench = currentBenchFor(leagueValue, userId, context.effectiveWeek);
-    if (bench.includes(outgoing)) {
-      const next = bench.map((id) => id === outgoing ? incoming : id);
-      updates[`leagues/${leagueId}/lineups/${userId}/${context.effectiveWeek}`] = Object.fromEntries(next.map((id) => [id, true]));
+  const release = await acquireLeagueMutationLock(leagueId, claims.uid);
+  try {
+    const ref = db().ref(`leagues/${leagueId}/trades/${tradeId}`);
+    const snapshot = await ref.once('value');
+    if (!snapshot.exists()) throw new HttpError(404, 'not-found', 'Trade offer not found.');
+    const trade = snapshot.val() as Record<string, unknown>;
+    if (str(trade.toUserId) !== claims.uid) throw new HttpError(403, 'forbidden', 'Only the receiving player can answer this offer.');
+    if (str(trade.status) !== 'pending') throw new HttpError(409, 'failed-precondition', 'This trade offer is already closed.');
+    const accept = body && typeof body === 'object' && (body as Record<string, unknown>).accept === true;
+    if (!accept) {
+      await ref.update({ status: 'rejected', respondedAt: Date.now() });
+      return { ok: true, status: 'rejected' };
     }
+    const context = await readOwnershipContext(leagueId, leagueValue);
+    const offeredTeamId = str(trade.offeredTeamId);
+    const requestedTeamId = str(trade.requestedTeamId);
+    const fromUserId = str(trade.fromUserId);
+    if (context.owners.get(offeredTeamId) !== fromUserId || context.owners.get(requestedTeamId) !== claims.uid) {
+      throw new HttpError(409, 'failed-precondition', 'Team ownership changed after this offer was created.');
+    }
+    const updates: Record<string, unknown> = {
+      [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${offeredTeamId}`]: claims.uid,
+      [`leagues/${leagueId}/teamOwnership/${context.effectiveWeek}/${requestedTeamId}`]: fromUserId,
+      [`leagues/${leagueId}/trades/${tradeId}/status`]: 'accepted',
+      [`leagues/${leagueId}/trades/${tradeId}/respondedAt`]: Date.now(),
+    };
+    for (const [userId, outgoing, incoming] of [[fromUserId, offeredTeamId, requestedTeamId], [claims.uid, requestedTeamId, offeredTeamId]] as const) {
+      const bench = currentBenchFor(leagueValue, userId, context.effectiveWeek);
+      if (bench.includes(outgoing)) {
+        const next = bench.map((id) => id === outgoing ? incoming : id);
+        updates[`leagues/${leagueId}/lineups/${userId}/${context.effectiveWeek}`] = Object.fromEntries(next.map((id) => [id, true]));
+      }
+    }
+    await db().ref().update(updates);
+    return { ok: true, status: 'accepted', effectiveWeek: context.effectiveWeek };
+  } finally {
+    await release();
   }
-  await db().ref().update(updates);
-  return { ok: true, status: 'accepted', effectiveWeek: context.effectiveWeek };
 }
 
 async function updateProfile(claims: Claims, body: unknown) {
@@ -2076,6 +2149,9 @@ function dispatch(
   }
   if (method === 'PATCH' && segments[0] === 'leagues' && segments[2] === 'lineup' && segments.length === 3) {
     return updateLineup(claims, segments[1] as string, body);
+  }
+  if (method === 'POST' && segments[0] === 'leagues' && segments[2] === 'teams' && segments[3] === 'drop' && segments.length === 5) {
+    return dropTeam(claims, segments[1] as string, segments[4] as string);
   }
   if (method === 'GET' && segments[0] === 'leagues' && segments[2] === 'market' && segments.length === 3) {
     return getTeamMarket(claims, segments[1] as string);
